@@ -370,13 +370,16 @@ function render(c, w, h, withBg) {
     startAngle += span;
   }
 
-  // Outer guide ring (first segment's color, semi-transparent)
+  // Outer guide ring — one arc per segment, colored + gapped like the donut
   const guideR = outerR + ringW * 0.3;
-  c.beginPath();
-  c.arc(cx, cy, guideR, 0, Math.PI * 2);
-  c.strokeStyle = segs[0].color + '44';
-  c.lineWidth = s * 0.002;
-  c.stroke();
+  for (const { seg, sRad, eRad } of arcs) {
+    c.beginPath();
+    c.arc(cx, cy, guideR, sRad, eRad);
+    c.strokeStyle = seg.color + '66';
+    c.lineWidth = s * 0.002;
+    c.lineCap = 'butt';
+    c.stroke();
+  }
 
   // Donut segments
   for (const { seg, sRad, eRad } of arcs) {
