@@ -371,13 +371,29 @@ function render(c, w, h, withBg) {
   }
 
   // Outer guide ring — one arc per segment, colored + gapped like the donut
-  const guideR = outerR + ringW * 0.3;
+  const guideR  = outerR + ringW * 0.3;
+  const tickH   = ringW * 0.22;  // half-length of the | end cap
+  const guideW  = s * 0.002;
   for (const { seg, sRad, eRad } of arcs) {
+    c.strokeStyle = seg.color + '66';
+    c.lineWidth   = guideW;
+    c.lineCap     = 'butt';
+
+    // Arc
     c.beginPath();
     c.arc(cx, cy, guideR, sRad, eRad);
-    c.strokeStyle = seg.color + '66';
-    c.lineWidth = s * 0.002;
-    c.lineCap = 'butt';
+    c.stroke();
+
+    // | cap at start
+    c.beginPath();
+    c.moveTo(cx + (guideR - tickH) * Math.cos(sRad), cy + (guideR - tickH) * Math.sin(sRad));
+    c.lineTo(cx + (guideR + tickH) * Math.cos(sRad), cy + (guideR + tickH) * Math.sin(sRad));
+    c.stroke();
+
+    // | cap at end
+    c.beginPath();
+    c.moveTo(cx + (guideR - tickH) * Math.cos(eRad), cy + (guideR - tickH) * Math.sin(eRad));
+    c.lineTo(cx + (guideR + tickH) * Math.cos(eRad), cy + (guideR + tickH) * Math.sin(eRad));
     c.stroke();
   }
 
