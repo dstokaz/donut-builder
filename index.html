@@ -387,7 +387,7 @@ let labelHitAreas = []; // [{item, left, right, top, bottom}] — updated each p
 function render(c, w, h, withBg) {
   const s  = Math.min(w, h);          // reference size for all proportions
   const cx = w / 2, cy = h / 2;
-  const outerR  = s * 0.34;
+  const outerR  = s * 0.27;
   const ringW   = s * state.ringThickness / 100;
   const innerR  = outerR - ringW;
   const midR    = (outerR + innerR) / 2;
