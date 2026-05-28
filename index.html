@@ -372,7 +372,7 @@ function render(c, w, h, withBg) {
 
   // Outer guide ring — one arc per segment, colored + gapped like the donut
   const guideR  = outerR + ringW * 0.3;
-  const tickH   = ringW * 0.22;  // half-length of the | end cap
+  const tickH   = ringW * 0.10;  // half-length of the | end cap
   const guideW  = s * 0.002;
   for (const { seg, sRad, eRad } of arcs) {
     c.strokeStyle = seg.color + '66';
