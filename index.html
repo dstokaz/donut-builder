@@ -152,6 +152,33 @@
 
   .field-label { font-size: 11px; color: #555; font-weight: 500; }
 
+  .field-label-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .toggle-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+
+  .vis-toggle {
+    background: none;
+    border: none;
+    padding: 0 2px;
+    cursor: pointer;
+    font-size: 12px;
+    color: #e0e0e0;
+    line-height: 1;
+    transition: color 0.15s;
+    flex-shrink: 0;
+  }
+  .vis-toggle.off { color: #333; }
+  .vis-toggle:hover { opacity: 0.7; }
+
   .slider-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
   .slider-header { display: flex; justify-content: space-between; align-items: center; }
   .slider-header span:first-child { font-size: 11px; color: #555; font-weight: 500; }
@@ -255,15 +282,24 @@
     <div class="section">
       <div class="panel-title">Center Text</div>
       <div class="field-row">
-        <div class="field-label">Title</div>
+        <div class="field-label-row">
+          <div class="field-label">Title</div>
+          <button class="vis-toggle" id="toggleCenterTitle" title="Show/hide">●</button>
+        </div>
         <input type="text" id="centerTitle" value="TOTAL" placeholder="TOTAL PTP">
       </div>
       <div class="field-row">
-        <div class="field-label">Value</div>
+        <div class="field-label-row">
+          <div class="field-label">Value</div>
+          <button class="vis-toggle" id="toggleCenterValue" title="Show/hide">●</button>
+        </div>
         <input type="text" id="centerValue" value="~1,000" placeholder="~1,000">
       </div>
       <div class="field-row">
-        <div class="field-label">Subtitle</div>
+        <div class="field-label-row">
+          <div class="field-label">Subtitle</div>
+          <button class="vis-toggle" id="toggleCenterSub" title="Show/hide">●</button>
+        </div>
         <input type="text" id="centerSub" value="tickets / month" placeholder="subtitle">
       </div>
     </div>
@@ -304,6 +340,18 @@
           <span id="valFontVal">2.5</span>
         </div>
         <input type="range" id="valFontSlider" min="1" max="6" step="0.5" value="2.5">
+      </div>
+      <div class="toggle-row">
+        <span class="field-label">% text</span>
+        <button class="vis-toggle" id="toggleShowPct" title="Show/hide">●</button>
+      </div>
+      <div class="toggle-row">
+        <span class="field-label">Label text</span>
+        <button class="vis-toggle" id="toggleShowLabel" title="Show/hide">●</button>
+      </div>
+      <div class="toggle-row">
+        <span class="field-label">Value text</span>
+        <button class="vis-toggle" id="toggleShowValue" title="Show/hide">●</button>
       </div>
     </div>
 
@@ -348,6 +396,12 @@ const state = {
   pctFontSize:  5,    // % of s
   nameFontSize: 3,    // % of s
   valFontSize:  2.5,  // % of s
+  showCenterTitle: true,
+  showCenterValue: true,
+  showCenterSub:   true,
+  showPct:   true,
+  showLabel: true,
+  showValue: true,
 };
 
 function mkItem(label, value, pct, color) {
@@ -406,7 +460,8 @@ canvas.style.width  = CANVAS_W + 'px';
 canvas.style.height = CANVAS_H + 'px';
 ctx.scale(dpr, dpr);
 
-let labelHitAreas = []; // [{item, left, right, top, bottom}] — updated each preview render
+let labelHitAreas  = []; // [{item, left, right, top, bottom}] — updated each preview render
+let centerHitAreas = []; // [{id, left, right, top, bottom}] — center text click targets
 
 function render(c, w, h, withBg) {
   const s  = Math.min(w, h);          // reference size for all proportions
@@ -548,45 +603,71 @@ function render(c, w, h, withBg) {
     }
 
     // Percentage (large, colored)
-    c.font = `700 ${pctFontSz}px ${ff}`;
-    c.fillStyle = seg.color;
-    c.textAlign = textAlign;
-    c.textBaseline = 'alphabetic';
-    c.fillText(Math.round(seg.computedPct) + '%', textX, baseY - s * 0.005);
+    if (state.showPct) {
+      c.font = `700 ${pctFontSz}px ${ff}`;
+      c.fillStyle = seg.color;
+      c.textAlign = textAlign;
+      c.textBaseline = 'alphabetic';
+      c.fillText(Math.round(seg.computedPct) + '%', textX, baseY - s * 0.005);
+    }
 
     // Label name
-    c.font = `600 ${nameFontSz}px ${ff}`;
-    c.fillStyle = '#e4e4e4';
-    c.textBaseline = 'alphabetic';
-    c.fillText(seg.label || 'Unnamed', textX, baseY + pctFontSz * 0.72);
+    if (state.showLabel) {
+      c.font = `600 ${nameFontSz}px ${ff}`;
+      c.fillStyle = '#e4e4e4';
+      c.textAlign = textAlign;
+      c.textBaseline = 'alphabetic';
+      c.fillText(seg.label || 'Unnamed', textX, baseY + pctFontSz * 0.72);
+    }
 
     // Value (optional) — shown as-is, user controls the text including any ~ prefix
-    if (seg.value !== null && seg.value !== '') {
+    if (state.showValue && seg.value !== null && seg.value !== '') {
       c.font = `400 ${valFontSz}px ${ff}`;
       c.fillStyle = '#777';
+      c.textAlign = textAlign;
+      c.textBaseline = 'alphabetic';
       c.fillText(String(seg.value), textX, baseY + pctFontSz * 0.72 + nameFontSz * 1.3);
     }
   }
 
   // Center text
   c.textAlign = 'center';
-  if (state.centerTitle) {
-    c.font = `500 ${s * 0.028}px ${ff}`;
+  if (c === ctx) centerHitAreas = [];
+
+  if (state.showCenterTitle && state.centerTitle) {
+    const sz = s * 0.028;
+    c.font = `500 ${sz}px ${ff}`;
     c.fillStyle = '#888';
     c.textBaseline = 'alphabetic';
-    c.fillText(state.centerTitle.toUpperCase(), cx, cy - s * 0.072);
+    const titleY = cy - s * 0.072;
+    c.fillText(state.centerTitle.toUpperCase(), cx, titleY);
+    if (c === ctx) {
+      const mw = c.measureText(state.centerTitle.toUpperCase()).width;
+      centerHitAreas.push({ id: 'centerTitle', left: cx - mw/2 - 8, right: cx + mw/2 + 8, top: titleY - sz, bottom: titleY + sz * 0.3 });
+    }
   }
-  if (state.centerValue) {
-    c.font = `700 ${s * 0.105}px ${ff}`;
+  if (state.showCenterValue && state.centerValue) {
+    const sz = s * 0.105;
+    c.font = `700 ${sz}px ${ff}`;
     c.fillStyle = '#fff';
     c.textBaseline = 'middle';
     c.fillText(state.centerValue, cx, cy);
+    if (c === ctx) {
+      const mw = c.measureText(state.centerValue).width;
+      centerHitAreas.push({ id: 'centerValue', left: cx - mw/2 - 8, right: cx + mw/2 + 8, top: cy - sz/2, bottom: cy + sz/2 });
+    }
   }
-  if (state.centerSub) {
-    c.font = `400 ${s * 0.028}px ${ff}`;
+  if (state.showCenterSub && state.centerSub) {
+    const sz = s * 0.028;
+    c.font = `400 ${sz}px ${ff}`;
     c.fillStyle = '#777';
     c.textBaseline = 'top';
-    c.fillText(state.centerSub, cx, cy + s * 0.068);
+    const subY = cy + s * 0.068;
+    c.fillText(state.centerSub, cx, subY);
+    if (c === ctx) {
+      const mw = c.measureText(state.centerSub).width;
+      centerHitAreas.push({ id: 'centerSub', left: cx - mw/2 - 8, right: cx + mw/2 + 8, top: subY, bottom: subY + sz * 1.3 });
+    }
   }
 }
 
@@ -609,6 +690,15 @@ function saveState() {
       bgColor:       state.bgColor,
       ringThickness: state.ringThickness,
       rotation:      state.rotation,
+      pctFontSize:   state.pctFontSize,
+      nameFontSize:  state.nameFontSize,
+      valFontSize:   state.valFontSize,
+      showCenterTitle: state.showCenterTitle,
+      showCenterValue: state.showCenterValue,
+      showCenterSub:   state.showCenterSub,
+      showPct:   state.showPct,
+      showLabel: state.showLabel,
+      showValue: state.showValue,
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   } catch (_) {}
@@ -628,6 +718,15 @@ function loadState() {
     state.bgColor       = data.bgColor       ?? state.bgColor;
     state.ringThickness = data.ringThickness ?? state.ringThickness;
     state.rotation      = data.rotation      ?? state.rotation;
+    state.pctFontSize   = data.pctFontSize   ?? state.pctFontSize;
+    state.nameFontSize  = data.nameFontSize  ?? state.nameFontSize;
+    state.valFontSize   = data.valFontSize   ?? state.valFontSize;
+    state.showCenterTitle = data.showCenterTitle ?? true;
+    state.showCenterValue = data.showCenterValue ?? true;
+    state.showCenterSub   = data.showCenterSub   ?? true;
+    state.showPct         = data.showPct   ?? true;
+    state.showLabel       = data.showLabel ?? true;
+    state.showValue       = data.showValue ?? true;
 
     // Keep nextId above any restored id
     nextId = Math.max(0, ...state.items.map(i => i.id)) + 1;
@@ -761,6 +860,29 @@ document.getElementById('add-item-btn').addEventListener('click', () => {
   });
 });
 
+// ── Text visibility toggles ───────────────────────────────────────────────────
+function syncToggleBtn(id, on) {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  btn.textContent = on ? '●' : '○';
+  btn.classList.toggle('off', !on);
+}
+
+function bindToggle(id, key) {
+  document.getElementById(id).addEventListener('click', () => {
+    state[key] = !state[key];
+    syncToggleBtn(id, state[key]);
+    renderPreview();
+  });
+}
+
+bindToggle('toggleCenterTitle', 'showCenterTitle');
+bindToggle('toggleCenterValue', 'showCenterValue');
+bindToggle('toggleCenterSub',   'showCenterSub');
+bindToggle('toggleShowPct',     'showPct');
+bindToggle('toggleShowLabel',   'showLabel');
+bindToggle('toggleShowValue',   'showValue');
+
 // ── Background ────────────────────────────────────────────────────────────────
 const bgPicker = document.getElementById('bgColorPicker');
 const bgHex    = document.getElementById('bgColorHex');
@@ -848,16 +970,26 @@ function hitLabel(x, y) {
   return null;
 }
 
+function hitCenter(x, y) {
+  for (const area of centerHitAreas) {
+    if (x >= area.left && x <= area.right && y >= area.top && y <= area.bottom)
+      return area.id;
+  }
+  return null;
+}
+
 canvas.addEventListener('mousedown', e => {
-  const pos  = canvasPos(e);
-  const item = hitLabel(pos.x, pos.y);
-  if (!item) return;
+  const pos      = canvasPos(e);
+  const item     = hitLabel(pos.x, pos.y);
+  const centerId = !item ? hitCenter(pos.x, pos.y) : null;
+  if (!item && !centerId) return;
   e.preventDefault();
   dragState = {
     item,
+    centerId,
     startX: pos.x, startY: pos.y,
-    origX: item.labelOffset.x,
-    origY: item.labelOffset.y,
+    origX: item ? item.labelOffset.x : 0,
+    origY: item ? item.labelOffset.y : 0,
     moved: false,
   };
   canvas.style.cursor = 'grabbing';
@@ -866,28 +998,35 @@ canvas.addEventListener('mousedown', e => {
 canvas.addEventListener('mousemove', e => {
   const pos = canvasPos(e);
   if (dragState) {
-    const dx = pos.x - dragState.startX;
-    const dy = pos.y - dragState.startY;
-    if (!dragState.moved && Math.hypot(dx, dy) > 4) dragState.moved = true;
-    if (dragState.moved) {
-      dragState.item.labelOffset.x = dragState.origX + dx;
-      dragState.item.labelOffset.y = dragState.origY + dy;
-      renderPreview();
+    if (dragState.item) {
+      const dx = pos.x - dragState.startX;
+      const dy = pos.y - dragState.startY;
+      if (!dragState.moved && Math.hypot(dx, dy) > 4) dragState.moved = true;
+      if (dragState.moved) {
+        dragState.item.labelOffset.x = dragState.origX + dx;
+        dragState.item.labelOffset.y = dragState.origY + dy;
+        renderPreview();
+      }
     }
   } else {
-    canvas.style.cursor = hitLabel(pos.x, pos.y) ? 'grab' : 'default';
+    canvas.style.cursor = (hitLabel(pos.x, pos.y) || hitCenter(pos.x, pos.y)) ? 'grab' : 'default';
   }
 });
 
 canvas.addEventListener('mouseup', e => {
   if (!dragState) return;
   if (!dragState.moved) {
-    // Pure click → focus the matching label text input in the panel
-    const input = document.querySelector(`input[type="text"][data-item-id="${dragState.item.id}"]`);
-    if (input) { input.focus(); input.select(); input.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    if (dragState.item) {
+      const input = document.querySelector(`input[type="text"][data-item-id="${dragState.item.id}"]`);
+      if (input) { input.focus(); input.select(); input.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    } else if (dragState.centerId) {
+      const input = document.getElementById(dragState.centerId);
+      if (input) { input.focus(); input.select(); input.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    }
   }
   dragState = null;
-  canvas.style.cursor = hitLabel(canvasPos(e).x, canvasPos(e).y) ? 'grab' : 'default';
+  const pos = canvasPos(e);
+  canvas.style.cursor = (hitLabel(pos.x, pos.y) || hitCenter(pos.x, pos.y)) ? 'grab' : 'default';
 });
 
 canvas.addEventListener('mouseleave', () => {
@@ -914,6 +1053,15 @@ document.getElementById('nameFontSlider').value = state.nameFontSize;
 document.getElementById('nameFontVal').textContent = state.nameFontSize;
 document.getElementById('valFontSlider').value = state.valFontSize;
 document.getElementById('valFontVal').textContent = state.valFontSize;
+
+// Sync visibility toggle buttons
+syncToggleBtn('toggleCenterTitle', state.showCenterTitle);
+syncToggleBtn('toggleCenterValue', state.showCenterValue);
+syncToggleBtn('toggleCenterSub',   state.showCenterSub);
+syncToggleBtn('toggleShowPct',     state.showPct);
+syncToggleBtn('toggleShowLabel',   state.showLabel);
+syncToggleBtn('toggleShowValue',   state.showValue);
+
 applyBgColor(state.bgColor);  // also sets picker + swatch
 
 renderItems();

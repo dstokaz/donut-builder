@@ -1,14 +1,19 @@
 # Changelog
 
-## [Unreleased]
+## [2026-05-28] — Text controls & visibility toggles
 
 ### Added
+- **Click-to-edit center text** — hover over the title, value, or subtitle inside the donut ring; cursor shows grab hand; click to focus the matching input in the panel
+- **Visibility toggles** — `●/○` toggle button next to each Center Text field (Title, Value, Subtitle) and three toggles in the Chart panel for `%` text, Label text, and Value text across all segments
 - **Text size sliders** — independently control the size of the `%` text, segment label text, and value text directly from the Chart panel
-- **Per-user data persistence** — chart state (segments, colors, offsets, sliders, center text, background) is saved to `localStorage` and restored automatically on revisit; each browser keeps its own independent data
+- **Per-user data persistence** — chart state (segments, colors, offsets, sliders, center text, background, visibility) is saved to `localStorage` and restored automatically on revisit; each browser keeps its own independent data
 
 ### Changed
 - Reduced donut size relative to canvas (`outerR` 34% → 27% of reference dimension) for more breathing room around labels and edges
+
+### Fixed
 - `applyBgColor` no longer runs at script load time, preventing it from overwriting restored localStorage state with defaults
+- Font size slider values were not being saved to localStorage; they are now persisted correctly
 
 ---
 
