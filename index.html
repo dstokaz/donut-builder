@@ -568,6 +568,49 @@ function render(c, w, h, withBg) {
 
 function renderPreview() {
   render(ctx, CANVAS_W, CANVAS_H, true);
+  saveState();
+}
+
+// ── Persistence (localStorage) ────────────────────────────────────────────────
+const STORAGE_KEY = 'donut-builder-v1';
+
+function saveState() {
+  try {
+    const data = {
+      items: state.items.map(({ id, label, value, pct, color, labelOffset }) =>
+        ({ id, label, value, pct, color, labelOffset })),
+      centerTitle:   state.centerTitle,
+      centerValue:   state.centerValue,
+      centerSub:     state.centerSub,
+      bgColor:       state.bgColor,
+      ringThickness: state.ringThickness,
+      rotation:      state.rotation,
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (_) {}
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return false;
+    const data = JSON.parse(raw);
+    if (!data || !Array.isArray(data.items) || !data.items.length) return false;
+
+    state.items         = data.items.map(it => ({ ...it, labelOffset: it.labelOffset || { x: 0, y: 0 } }));
+    state.centerTitle   = data.centerTitle   ?? state.centerTitle;
+    state.centerValue   = data.centerValue   ?? state.centerValue;
+    state.centerSub     = data.centerSub     ?? state.centerSub;
+    state.bgColor       = data.bgColor       ?? state.bgColor;
+    state.ringThickness = data.ringThickness ?? state.ringThickness;
+    state.rotation      = data.rotation      ?? state.rotation;
+
+    // Keep nextId above any restored id
+    nextId = Math.max(0, ...state.items.map(i => i.id)) + 1;
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 // ── UI: Items list ──────────────────────────────────────────────────────────
@@ -712,8 +755,6 @@ bgHex.addEventListener('input', e => {
   if (/^#[0-9a-fA-F]{6}$/.test(e.target.value.trim())) applyBgColor(e.target.value.trim());
 });
 
-applyBgColor('#111111');
-
 // ── Export ────────────────────────────────────────────────────────────────────
 function exportPNG(withBg) {
   const scale = 2;
@@ -815,6 +856,18 @@ canvas.addEventListener('mouseleave', () => {
 });
 
 // ── Init ──────────────────────────────────────────────────────────────────────
+loadState();
+
+// Sync panel controls from state
+document.getElementById('centerTitle').value  = state.centerTitle;
+document.getElementById('centerValue').value  = state.centerValue;
+document.getElementById('centerSub').value    = state.centerSub;
+document.getElementById('thicknessSlider').value = state.ringThickness;
+document.getElementById('thicknessVal').textContent = state.ringThickness + '%';
+document.getElementById('rotationSlider').value = state.rotation;
+document.getElementById('rotationVal').textContent = state.rotation + '°';
+applyBgColor(state.bgColor);  // also sets picker + swatch
+
 renderItems();
 renderPreview();
 </script>
