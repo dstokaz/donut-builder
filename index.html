@@ -284,6 +284,27 @@
         </div>
         <input type="range" id="rotationSlider" min="0" max="360" step="1" value="0">
       </div>
+      <div class="slider-row">
+        <div class="slider-header">
+          <span>% text size</span>
+          <span id="pctFontVal">5</span>
+        </div>
+        <input type="range" id="pctFontSlider" min="1" max="10" step="0.5" value="5">
+      </div>
+      <div class="slider-row">
+        <div class="slider-header">
+          <span>Label text size</span>
+          <span id="nameFontVal">3</span>
+        </div>
+        <input type="range" id="nameFontSlider" min="1" max="8" step="0.5" value="3">
+      </div>
+      <div class="slider-row">
+        <div class="slider-header">
+          <span>Value text size</span>
+          <span id="valFontVal">2.5</span>
+        </div>
+        <input type="range" id="valFontSlider" min="1" max="6" step="0.5" value="2.5">
+      </div>
     </div>
 
     <div class="section">
@@ -324,6 +345,9 @@ const state = {
   bgColor: '#111111',
   ringThickness: 13,  // % of s (4–30)
   rotation: 0,        // degrees (0–360)
+  pctFontSize:  5,    // % of s
+  nameFontSize: 3,    // % of s
+  valFontSize:  2.5,  // % of s
 };
 
 function mkItem(label, value, pct, color) {
@@ -462,9 +486,9 @@ function render(c, w, h, withBg) {
   const horizExt  = s * 0.038;
   const lineColor = '#555555';
 
-  const pctFontSz  = s * 0.048;
-  const nameFontSz = s * 0.030;
-  const valFontSz  = s * 0.025;
+  const pctFontSz  = s * state.pctFontSize  / 100;
+  const nameFontSz = s * state.nameFontSize / 100;
+  const valFontSz  = s * state.valFontSize  / 100;
   const ff = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 
   if (c === ctx) labelHitAreas = [];
@@ -787,6 +811,24 @@ document.getElementById('rotationSlider').addEventListener('input', e => {
   renderPreview();
 });
 
+document.getElementById('pctFontSlider').addEventListener('input', e => {
+  state.pctFontSize = parseFloat(e.target.value);
+  document.getElementById('pctFontVal').textContent = state.pctFontSize;
+  renderPreview();
+});
+
+document.getElementById('nameFontSlider').addEventListener('input', e => {
+  state.nameFontSize = parseFloat(e.target.value);
+  document.getElementById('nameFontVal').textContent = state.nameFontSize;
+  renderPreview();
+});
+
+document.getElementById('valFontSlider').addEventListener('input', e => {
+  state.valFontSize = parseFloat(e.target.value);
+  document.getElementById('valFontVal').textContent = state.valFontSize;
+  renderPreview();
+});
+
 // ── Canvas label interaction ──────────────────────────────────────────────────
 let dragState = null;
 
@@ -866,6 +908,12 @@ document.getElementById('thicknessSlider').value = state.ringThickness;
 document.getElementById('thicknessVal').textContent = state.ringThickness + '%';
 document.getElementById('rotationSlider').value = state.rotation;
 document.getElementById('rotationVal').textContent = state.rotation + '°';
+document.getElementById('pctFontSlider').value = state.pctFontSize;
+document.getElementById('pctFontVal').textContent = state.pctFontSize;
+document.getElementById('nameFontSlider').value = state.nameFontSize;
+document.getElementById('nameFontVal').textContent = state.nameFontSize;
+document.getElementById('valFontSlider').value = state.valFontSize;
+document.getElementById('valFontVal').textContent = state.valFontSize;
 applyBgColor(state.bgColor);  // also sets picker + swatch
 
 renderItems();

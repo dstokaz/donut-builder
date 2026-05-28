@@ -2,12 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+- **Text size sliders** — independently control the size of the `%` text, segment label text, and value text directly from the Chart panel
+- **Per-user data persistence** — chart state (segments, colors, offsets, sliders, center text, background) is saved to `localStorage` and restored automatically on revisit; each browser keeps its own independent data
+
 ### Changed
-- Reduced donut size relative to canvas for better breathing room around labels and edges
+- Reduced donut size relative to canvas (`outerR` 34% → 27% of reference dimension) for more breathing room around labels and edges
+- `applyBgColor` no longer runs at script load time, preventing it from overwriting restored localStorage state with defaults
 
 ---
 
-## [2025-05-28] — Interactive controls & visual polish
+## [2026-05-28] — Interactive controls & visual polish
 
 ### Added
 - **Ring thickness slider** — adjust the donut ring width from 4% to 30%
