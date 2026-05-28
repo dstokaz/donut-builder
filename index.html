@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Donut Builder</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0e0e0e;
+    color: #e0e0e0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 13px;
+    min-height: 100vh;
+    display: flex;
+  }
+
+  /* ── Left Panel ─────────────────────────────────────── */
+  #panel {
+    width: 360px;
+    min-width: 360px;
+    background: #161616;
+    border-right: 1px solid #252525;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  #panel-inner {
+    padding: 24px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  .panel-title {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #555;
+    margin-bottom: 10px;
+  }
+
+  /* Items */
+  #items-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .item-row {
+    display: grid;
+    grid-template-columns: 28px 1fr 72px 56px 28px;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .color-swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    background: none;
+    position: relative;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .color-swatch input[type="color"] {
+    position: absolute;
+    top: 0; left: 0;
+    width: 200%;
+    height: 200%;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    transform: translate(-25%, -25%);
+  }
+
+  input[type="text"],
+  input[type="number"] {
+    background: #1e1e1e;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+    color: #e0e0e0;
+    font-size: 13px;
+    padding: 6px 8px;
+    outline: none;
+    width: 100%;
+    transition: border-color 0.15s;
+  }
+
+  input[type="text"]:focus,
+  input[type="number"]:focus { border-color: #444; }
+
+  input[type="number"] { -moz-appearance: textfield; }
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; }
+
+  .pct-wrap { position: relative; }
+  .pct-wrap input { padding-right: 20px; }
+  .pct-wrap::after {
+    content: '%';
+    position: absolute;
+    right: 8px; top: 50%;
+    transform: translateY(-50%);
+    color: #555; font-size: 12px;
+    pointer-events: none;
+  }
+
+  .pct-auto { color: #555 !important; border-color: #1e1e1e !important; }
+
+  .btn-icon {
+    background: none;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+    color: #555;
+    cursor: pointer;
+    width: 28px; height: 28px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+    transition: all 0.15s;
+    line-height: 1;
+  }
+  .btn-icon:hover { border-color: #555; color: #e0e0e0; }
+  .btn-icon.delete:hover { border-color: #c0392b; color: #e74c3c; }
+
+  #add-item-btn {
+    background: #1e1e1e;
+    border: 1px dashed #2e2e2e;
+    border-radius: 8px;
+    color: #555;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 8px;
+    text-align: center;
+    transition: all 0.15s;
+    margin-top: 4px;
+  }
+  #add-item-btn:hover { border-color: #555; color: #aaa; }
+
+  .section { display: flex; flex-direction: column; }
+
+  .field-row {
+    display: flex; flex-direction: column;
+    gap: 6px; margin-bottom: 8px;
+  }
+
+  .field-label { font-size: 11px; color: #555; font-weight: 500; }
+
+  .bg-row {
+    display: grid;
+    grid-template-columns: 36px 1fr;
+    gap: 8px; align-items: center;
+  }
+
+  .bg-swatch {
+    width: 36px; height: 36px;
+    border-radius: 8px;
+    border: 1px solid #2a2a2a;
+    overflow: hidden; position: relative; cursor: pointer;
+  }
+  .bg-swatch input[type="color"] {
+    position: absolute; top: 0; left: 0;
+    width: 200%; height: 200%;
+    border: none; cursor: pointer;
+    transform: translate(-25%, -25%);
+  }
+
+  .export-btns { display: flex; flex-direction: column; gap: 8px; }
+
+  .btn-export {
+    background: #1e1e1e;
+    border: 1px solid #2a2a2a;
+    border-radius: 8px;
+    color: #e0e0e0;
+    cursor: pointer;
+    font-size: 13px; font-weight: 500;
+    padding: 10px 16px;
+    text-align: center;
+    transition: all 0.15s;
+    letter-spacing: 0.02em;
+  }
+  .btn-export:hover { background: #252525; border-color: #444; }
+  .btn-export.primary {
+    background: #1a2a1a;
+    border-color: #2d4a2d;
+    color: #7bc97b;
+  }
+  .btn-export.primary:hover { background: #213221; border-color: #3a6a3a; }
+
+  /* ── Right Panel ─────────────────────────────────────── */
+  #preview {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+    background: #0e0e0e;
+    overflow: hidden;
+  }
+
+  #canvas {
+    max-width: 100%;
+    max-height: calc(100vh - 64px);
+    border-radius: 10px;
+    display: block;
+  }
+</style>
+</head>
+<body>
+
+<div id="panel">
+  <div id="panel-inner">
+
+    <div class="section">
+      <div class="panel-title">Segments</div>
+      <div id="items-list"></div>
+      <button id="add-item-btn">+ Add segment</button>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Center Text</div>
+      <div class="field-row">
+        <div class="field-label">Title</div>
+        <input type="text" id="centerTitle" value="TOTAL" placeholder="TOTAL PTP">
+      </div>
+      <div class="field-row">
+        <div class="field-label">Value</div>
+        <input type="text" id="centerValue" value="~1,000" placeholder="~1,000">
+      </div>
+      <div class="field-row">
+        <div class="field-label">Subtitle</div>
+        <input type="text" id="centerSub" value="tickets / month" placeholder="subtitle">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Background</div>
+      <div class="bg-row">
+        <div class="bg-swatch" id="bgSwatch">
+          <input type="color" id="bgColorPicker" value="#111111">
+        </div>
+        <input type="text" id="bgColorHex" value="#111111" placeholder="#111111">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Export</div>
+      <div class="export-btns">
+        <button class="btn-export primary" onclick="exportPNG(true)">Export PNG</button>
+        <button class="btn-export" onclick="exportPNG(false)">Export PNG (transparent)</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div id="preview">
+  <canvas id="canvas"></canvas>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+const PALETTE = ['#F5A623','#4A4A4A','#666666','#888888','#2A7AFF','#E84545','#27AE60','#9B59B6'];
+let nextId = 1;
+
+const state = {
+  items: [],
+  centerTitle: 'TOTAL',
+  centerValue: '~1,000',
+  centerSub: 'tickets / month',
+  bgColor: '#111111',
+};
+
+function mkItem(label, value, pct, color) {
+  return { id: nextId++, label, value, pct, color, labelOffset: { x: 0, y: 0 } };
+}
+
+state.items = [
+  mkItem('Invoice Status', 600, null, PALETTE[0]),
+  mkItem('Other internal', null, 20, PALETTE[1]),
+  mkItem('External', null, 20, PALETTE[2]),
+];
+
+// ── Percentage Logic ────────────────────────────────────────────────────────
+
+// Extract numeric portion from a value string like "~600" or "1,200" or plain "600".
+function parseValue(v) {
+  if (v === null || v === '') return null;
+  const n = parseFloat(String(v).replace(/[^\d.-]/g, ''));
+  return isNaN(n) ? null : n;
+}
+
+function hasNumericValue(item) {
+  return parseValue(item.value) !== null;
+}
+
+function computeSegments() {
+  const items = state.items;
+  if (!items.length) return [];
+
+  const manualItems = items.filter(it => !hasNumericValue(it));
+  const valueItems  = items.filter(it =>  hasNumericValue(it));
+  const usedPct     = manualItems.reduce((s, it) => s + (parseFloat(it.pct) || 0), 0);
+  const remaining   = Math.max(0, 100 - usedPct);
+  const totalValue  = valueItems.reduce((s, it) => s + parseValue(it.value), 0);
+
+  return items.map(it => {
+    const pct = hasNumericValue(it)
+      ? (totalValue > 0 ? parseValue(it.value) / totalValue * remaining : 0)
+      : (parseFloat(it.pct) || 0);
+    return { ...it, computedPct: pct };
+  });
+}
+
+// ── Canvas Rendering ────────────────────────────────────────────────────────
+const CANVAS_W = 880;
+const CANVAS_H = 600;
+
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+
+// Scale canvas buffer to device pixel ratio for crisp rendering on HiDPI screens
+const dpr = window.devicePixelRatio || 1;
+canvas.width        = CANVAS_W * dpr;
+canvas.height       = CANVAS_H * dpr;
+canvas.style.width  = CANVAS_W + 'px';
+canvas.style.height = CANVAS_H + 'px';
+ctx.scale(dpr, dpr);
+
+let labelHitAreas = []; // [{item, left, right, top, bottom}] — updated each preview render
+
+function render(c, w, h, withBg) {
+  const s  = Math.min(w, h);          // reference size for all proportions
+  const cx = w / 2, cy = h / 2;
+  const outerR = s * 0.34;
+  const innerR = s * 0.215;
+  const ringW  = outerR - innerR;
+  const midR   = (outerR + innerR) / 2;
+  const GAP_RAD = (1.8 * Math.PI) / 180;
+
+  c.clearRect(0, 0, w, h);
+
+  if (withBg) {
+    c.fillStyle = state.bgColor;
+    c.fillRect(0, 0, w, h);
+  }
+
+  const segs = computeSegments();
+  if (!segs.length) return;
+
+  const totalPct = segs.reduce((sum, it) => sum + it.computedPct, 0);
+  if (totalPct <= 0) return;
+  const scale = (2 * Math.PI) / totalPct;
+
+  // Build arc data
+  const arcs = [];
+  let startAngle = -Math.PI / 2;
+  for (const seg of segs) {
+    const span  = seg.computedPct * scale;
+    const sRad  = startAngle + GAP_RAD / 2;
+    const eRad  = startAngle + span - GAP_RAD / 2;
+    const mRad  = startAngle + span / 2;
+    arcs.push({ seg, sRad, eRad, mRad, span });
+    startAngle += span;
+  }
+
+  // Outer guide ring (first segment's color, semi-transparent)
+  const guideR = outerR + ringW * 0.3;
+  c.beginPath();
+  c.arc(cx, cy, guideR, 0, Math.PI * 2);
+  c.strokeStyle = segs[0].color + '44';
+  c.lineWidth = s * 0.002;
+  c.stroke();
+
+  // Donut segments
+  for (const { seg, sRad, eRad } of arcs) {
+    c.beginPath();
+    c.arc(cx, cy, midR, sRad, eRad);
+    c.strokeStyle = seg.color;
+    c.lineWidth = ringW;
+    c.lineCap = 'butt';
+    c.stroke();
+  }
+
+  // Labels + leader lines
+  const leaderR   = outerR + ringW * 0.15;
+  const lineEndR  = outerR + ringW * 1.25;
+  const horizExt  = s * 0.038;
+  const lineColor = '#555555';
+
+  const pctFontSz  = s * 0.048;
+  const nameFontSz = s * 0.030;
+  const valFontSz  = s * 0.025;
+  const ff = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+
+  if (c === ctx) labelHitAreas = [];
+
+  for (const { seg, mRad } of arcs) {
+    const cosA    = Math.cos(mRad);
+    const sinA    = Math.sin(mRad);
+    const isRight = cosA >= 0;
+
+    // Line start (donut edge) and natural radial endpoint
+    const lx1      = cx + leaderR  * cosA;
+    const ly1      = cy + leaderR  * sinA;
+    const lx2      = cx + lineEndR * cosA;
+    const ly2      = cy + lineEndR * sinA;
+    const tickEndX = lx2 + (isRight ? horizExt : -horizExt);
+
+    // Per-label offset from drag
+    const origItem = state.items.find(it => it.id === seg.id);
+    const ox = origItem ? origItem.labelOffset.x : 0;
+    const oy = origItem ? origItem.labelOffset.y : 0;
+    const connX = tickEndX + ox;
+    const connY = ly2      + oy;
+
+    // Leader line: use radial+tick when at rest, straight line when moved
+    c.beginPath();
+    c.moveTo(lx1, ly1);
+    if (ox === 0 && oy === 0) {
+      c.lineTo(lx2, ly2);
+    }
+    c.lineTo(connX, connY);
+    c.strokeStyle = lineColor;
+    c.lineWidth = s * 0.0018;
+    c.stroke();
+
+    // Dot
+    c.beginPath();
+    c.arc(connX, connY, s * 0.004, 0, Math.PI * 2);
+    c.fillStyle = lineColor;
+    c.fill();
+
+    const textX     = connX + (isRight ? s * 0.01 : -s * 0.01);
+    const textAlign = isRight ? 'left' : 'right';
+    const baseY     = connY;
+
+    // Record hit area for mouse interaction (preview canvas only)
+    if (c === ctx && origItem) {
+      const hTop    = baseY - pctFontSz * 1.1;
+      const hBottom = baseY + pctFontSz * 0.72 + nameFontSz * 1.5;
+      const hW      = 180;
+      labelHitAreas.push({
+        item:   origItem,
+        left:   isRight ? textX      : textX - hW,
+        right:  isRight ? textX + hW : textX,
+        top:    hTop,
+        bottom: hBottom,
+      });
+    }
+
+    // Percentage (large, colored)
+    c.font = `700 ${pctFontSz}px ${ff}`;
+    c.fillStyle = seg.color;
+    c.textAlign = textAlign;
+    c.textBaseline = 'alphabetic';
+    c.fillText(Math.round(seg.computedPct) + '%', textX, baseY - s * 0.005);
+
+    // Label name
+    c.font = `600 ${nameFontSz}px ${ff}`;
+    c.fillStyle = '#e4e4e4';
+    c.textBaseline = 'alphabetic';
+    c.fillText(seg.label || 'Unnamed', textX, baseY + pctFontSz * 0.72);
+
+    // Value (optional) — shown as-is, user controls the text including any ~ prefix
+    if (seg.value !== null && seg.value !== '') {
+      c.font = `400 ${valFontSz}px ${ff}`;
+      c.fillStyle = '#777';
+      c.fillText(String(seg.value), textX, baseY + pctFontSz * 0.72 + nameFontSz * 1.3);
+    }
+  }
+
+  // Center text
+  c.textAlign = 'center';
+  if (state.centerTitle) {
+    c.font = `500 ${s * 0.028}px ${ff}`;
+    c.fillStyle = '#888';
+    c.textBaseline = 'alphabetic';
+    c.fillText(state.centerTitle.toUpperCase(), cx, cy - s * 0.072);
+  }
+  if (state.centerValue) {
+    c.font = `700 ${s * 0.105}px ${ff}`;
+    c.fillStyle = '#fff';
+    c.textBaseline = 'middle';
+    c.fillText(state.centerValue, cx, cy);
+  }
+  if (state.centerSub) {
+    c.font = `400 ${s * 0.028}px ${ff}`;
+    c.fillStyle = '#777';
+    c.textBaseline = 'top';
+    c.fillText(state.centerSub, cx, cy + s * 0.068);
+  }
+}
+
+function renderPreview() {
+  render(ctx, CANVAS_W, CANVAS_H, true);
+}
+
+// ── UI: Items list ──────────────────────────────────────────────────────────
+
+// Refresh all auto-pct displays and toggle readonly state — no DOM rebuild.
+function refreshPctFields() {
+  const segs = computeSegments();
+  state.items.forEach(item => {
+    const pctIn = document.querySelector(`.pct-wrap input[data-item-id="${item.id}"]`);
+    if (!pctIn) return;
+    const hasValue = hasNumericValue(item);
+    if (hasValue) {
+      const seg = segs.find(s => s.id === item.id);
+      pctIn.value    = seg ? Math.round(seg.computedPct * 10) / 10 : '';
+      pctIn.readOnly = true;
+      pctIn.classList.add('pct-auto');
+    } else {
+      pctIn.readOnly = false;
+      pctIn.classList.remove('pct-auto');
+      if (pctIn.value === '') pctIn.value = item.pct !== null ? item.pct : '';
+    }
+  });
+}
+
+function renderItems() {
+  const list = document.getElementById('items-list');
+  list.innerHTML = '';
+  const segs = computeSegments();
+
+  state.items.forEach((item, idx) => {
+    const computed = segs.find(s => s.id === item.id);
+    const hasValue = hasNumericValue(item);
+
+    const row = document.createElement('div');
+    row.className = 'item-row';
+
+    // Color swatch
+    const swatchWrap = document.createElement('div');
+    swatchWrap.className = 'color-swatch';
+    swatchWrap.style.background = item.color;
+    const colorIn = document.createElement('input');
+    colorIn.type = 'color';
+    colorIn.value = item.color;
+    colorIn.addEventListener('input', e => {
+      item.color = e.target.value;
+      swatchWrap.style.background = item.color;
+      renderPreview();
+    });
+    swatchWrap.appendChild(colorIn);
+
+    // Label
+    const labelIn = document.createElement('input');
+    labelIn.type = 'text';
+    labelIn.value = item.label;
+    labelIn.placeholder = 'Label';
+    labelIn.dataset.itemId = item.id;
+    labelIn.addEventListener('input', e => { item.label = e.target.value; renderPreview(); });
+
+    // Value — text so user can type prefixes like ~
+    const valIn = document.createElement('input');
+    valIn.type = 'text';
+    valIn.value = item.value !== null ? item.value : '';
+    valIn.placeholder = 'Value';
+    valIn.addEventListener('input', e => {
+      item.value = e.target.value === '' ? null : e.target.value;
+      refreshPctFields();
+      renderPreview();
+    });
+
+    // Percentage — always present; readonly toggled in-place by refreshPctFields()
+    const pctWrap = document.createElement('div');
+    pctWrap.className = 'pct-wrap';
+    const pctIn = document.createElement('input');
+    pctIn.type = 'number';
+    pctIn.min = '0'; pctIn.max = '100';
+    pctIn.placeholder = '%';
+    pctIn.dataset.itemId = item.id;
+    if (hasNumericValue(item)) {
+      pctIn.value    = computed ? Math.round(computed.computedPct * 10) / 10 : '';
+      pctIn.readOnly = true;
+      pctIn.classList.add('pct-auto');
+    } else {
+      pctIn.value = item.pct !== null ? item.pct : '';
+    }
+    pctIn.addEventListener('input', e => {
+      if (pctIn.readOnly) return;
+      item.pct = e.target.value === '' ? 0 : parseFloat(e.target.value);
+      refreshPctFields(); // update other auto-pct fields
+      renderPreview();
+    });
+    pctWrap.appendChild(pctIn);
+
+    // Delete
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn-icon delete';
+    delBtn.innerHTML = '×';
+    delBtn.title = 'Remove';
+    delBtn.addEventListener('click', () => {
+      if (state.items.length > 1) {
+        state.items.splice(idx, 1);
+        renderItems();
+        renderPreview();
+      }
+    });
+
+    row.append(swatchWrap, labelIn, valIn, pctWrap, delBtn);
+    list.appendChild(row);
+  });
+}
+
+// ── Add item ────────────────────────────────────────────────────────────────
+document.getElementById('add-item-btn').addEventListener('click', () => {
+  const color = PALETTE[state.items.length % PALETTE.length];
+  state.items.push(mkItem('New segment', null, 0, color));
+  renderItems();
+  renderPreview();
+});
+
+// ── Center text ──────────────────────────────────────────────────────────────
+['centerTitle', 'centerValue', 'centerSub'].forEach(id => {
+  document.getElementById(id).addEventListener('input', e => {
+    state[id] = e.target.value;
+    renderPreview();
+  });
+});
+
+// ── Background ────────────────────────────────────────────────────────────────
+const bgPicker = document.getElementById('bgColorPicker');
+const bgHex    = document.getElementById('bgColorHex');
+const bgSwatch = document.getElementById('bgSwatch');
+
+function applyBgColor(hex) {
+  state.bgColor = hex;
+  bgSwatch.style.background = hex;
+  bgPicker.value = /^#[0-9a-fA-F]{6}$/.test(hex) ? hex : '#111111';
+  bgHex.value = hex;
+  renderPreview();
+}
+
+bgPicker.addEventListener('input', e => applyBgColor(e.target.value));
+bgHex.addEventListener('input', e => {
+  if (/^#[0-9a-fA-F]{6}$/.test(e.target.value.trim())) applyBgColor(e.target.value.trim());
+});
+
+applyBgColor('#111111');
+
+// ── Export ────────────────────────────────────────────────────────────────────
+function exportPNG(withBg) {
+  const scale = 2;
+  const off   = document.createElement('canvas');
+  off.width   = CANVAS_W * scale;
+  off.height  = CANVAS_H * scale;
+  const octx  = off.getContext('2d');
+  octx.scale(scale, scale);
+  render(octx, CANVAS_W, CANVAS_H, withBg);
+  off.toBlob(blob => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = withBg ? 'donut.png' : 'donut-transparent.png';
+    a.click();
+    URL.revokeObjectURL(url);
+  }, 'image/png');
+}
+
+// ── Canvas label interaction ──────────────────────────────────────────────────
+let dragState = null;
+
+function canvasPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - rect.left) * (CANVAS_W / rect.width),
+    y: (e.clientY - rect.top)  * (CANVAS_H / rect.height),
+  };
+}
+
+function hitLabel(x, y) {
+  for (const area of labelHitAreas) {
+    if (x >= area.left && x <= area.right && y >= area.top && y <= area.bottom)
+      return area.item;
+  }
+  return null;
+}
+
+canvas.addEventListener('mousedown', e => {
+  const pos  = canvasPos(e);
+  const item = hitLabel(pos.x, pos.y);
+  if (!item) return;
+  e.preventDefault();
+  dragState = {
+    item,
+    startX: pos.x, startY: pos.y,
+    origX: item.labelOffset.x,
+    origY: item.labelOffset.y,
+    moved: false,
+  };
+  canvas.style.cursor = 'grabbing';
+});
+
+canvas.addEventListener('mousemove', e => {
+  const pos = canvasPos(e);
+  if (dragState) {
+    const dx = pos.x - dragState.startX;
+    const dy = pos.y - dragState.startY;
+    if (!dragState.moved && Math.hypot(dx, dy) > 4) dragState.moved = true;
+    if (dragState.moved) {
+      dragState.item.labelOffset.x = dragState.origX + dx;
+      dragState.item.labelOffset.y = dragState.origY + dy;
+      renderPreview();
+    }
+  } else {
+    canvas.style.cursor = hitLabel(pos.x, pos.y) ? 'grab' : 'default';
+  }
+});
+
+canvas.addEventListener('mouseup', e => {
+  if (!dragState) return;
+  if (!dragState.moved) {
+    // Pure click → focus the matching label text input in the panel
+    const input = document.querySelector(`input[type="text"][data-item-id="${dragState.item.id}"]`);
+    if (input) { input.focus(); input.select(); input.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+  }
+  dragState = null;
+  canvas.style.cursor = hitLabel(canvasPos(e).x, canvasPos(e).y) ? 'grab' : 'default';
+});
+
+canvas.addEventListener('mouseleave', () => {
+  if (dragState) {
+    dragState = null;
+    canvas.style.cursor = 'default';
+  }
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+renderItems();
+renderPreview();
+</script>
+</body>
+</html>
