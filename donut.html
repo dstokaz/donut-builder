@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Donut Builder</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+
+<div id="panel">
+  <div id="panel-inner">
+
+    <a class="back-link" href="index.html">← All charts</a>
+
+    <div class="section">
+      <div class="panel-title">Segments</div>
+      <div id="items-list"></div>
+      <button id="add-item-btn" class="btn-add">+ Add segment</button>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Center Text</div>
+      <div class="field-row">
+        <div class="field-label-row">
+          <div class="field-label">Title</div>
+          <button class="vis-toggle" id="toggleCenterTitle" title="Show/hide">●</button>
+        </div>
+        <input type="text" id="centerTitle" value="TOTAL" placeholder="TOTAL PTP">
+      </div>
+      <div class="field-row">
+        <div class="field-label-row">
+          <div class="field-label">Value</div>
+          <button class="vis-toggle" id="toggleCenterValue" title="Show/hide">●</button>
+        </div>
+        <input type="text" id="centerValue" value="~1,000" placeholder="~1,000">
+      </div>
+      <div class="field-row">
+        <div class="field-label-row">
+          <div class="field-label">Subtitle</div>
+          <button class="vis-toggle" id="toggleCenterSub" title="Show/hide">●</button>
+        </div>
+        <input type="text" id="centerSub" value="tickets / month" placeholder="subtitle">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Chart</div>
+      <div class="slider-row">
+        <div class="slider-header">
+          <span>Ring thickness</span>
+          <span id="thicknessVal">13%</span>
+        </div>
+        <input type="range" id="thicknessSlider" min="4" max="30" step="1" value="13">
+      </div>
+      <div class="slider-row">
+        <div class="slider-header">
+          <span>Rotation</span>
+          <span id="rotationVal">0°</span>
+        </div>
+        <input type="range" id="rotationSlider" min="0" max="360" step="1" value="0">
+      </div>
+      <div class="slider-row">
+        <div class="slider-header">
+          <span>% text size</span>
+          <span id="pctFontVal">5</span>
+        </div>
+        <input type="range" id="pctFontSlider" min="1" max="10" step="0.5" value="5">
+      </div>
+      <div class="slider-row">
+        <div class="slider-header">
+          <span>Label text size</span>
+          <span id="nameFontVal">3</span>
+        </div>
+        <input type="range" id="nameFontSlider" min="1" max="8" step="0.5" value="3">
+      </div>
+      <div class="slider-row">
+        <div class="slider-header">
+          <span>Value text size</span>
+          <span id="valFontVal">2.5</span>
+        </div>
+        <input type="range" id="valFontSlider" min="1" max="6" step="0.5" value="2.5">
+      </div>
+      <div class="toggle-row">
+        <span class="field-label">% text</span>
+        <button class="vis-toggle" id="toggleShowPct" title="Show/hide">●</button>
+      </div>
+      <div class="toggle-row">
+        <span class="field-label">Label text</span>
+        <button class="vis-toggle" id="toggleShowLabel" title="Show/hide">●</button>
+      </div>
+      <div class="toggle-row">
+        <span class="field-label">Value text</span>
+        <button class="vis-toggle" id="toggleShowValue" title="Show/hide">●</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Background</div>
+      <div class="bg-row">
+        <div class="bg-swatch" id="bgSwatch">
+          <input type="color" id="bgColorPicker" value="#111111">
+        </div>
+        <input type="text" id="bgColorHex" value="#111111" placeholder="#111111">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Export</div>
+      <div class="export-btns">
+        <button class="btn-export primary" onclick="exportChart(true)">Export PNG</button>
+        <button class="btn-export" onclick="exportChart(false)">Export PNG (transparent)</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div id="preview">
+  <canvas id="canvas"></canvas>
+</div>
+
+<script src="shared.js"></script>
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let nextId = 1;
+
+const state = {
+  items: [],
+  centerTitle: 'TOTAL',
+  centerValue: '~1,000',
+  centerSub: 'tickets / month',
+  bgColor: '#111111',
+  ringThickness: 13,  // % of s (4–30)
+  rotation: 0,        // degrees (0–360)
+  pctFontSize:  5,    // % of s
+  nameFontSize: 3,    // % of s
+  valFontSize:  2.5,  // % of s
+  showCenterTitle: true,
+  showCenterValue: true,
+  showCenterSub:   true,
+  showPct:   true,
+  showLabel: true,
+  showValue: true,
+};
+
+function mkItem(label, value, pct, color) {
+  return { id: nextId++, label, value, pct, color, labelOffset: { x: 0, y: 0 } };
+}
+
+state.items = [
+  mkItem('Invoice Status', 600, null, PALETTE[0]),
+  mkItem('Other internal', null, 20, PALETTE[1]),
+  mkItem('External', null, 20, PALETTE[2]),
+];
+
+// ── Percentage Logic ────────────────────────────────────────────────────────
+
+function hasNumericValue(item) {
+  return parseValue(item.value) !== null;
+}
+
+function computeSegments() {
+  const items = state.items;
+  if (!items.length) return [];
+
+  const manualItems = items.filter(it => !hasNumericValue(it));
+  const valueItems  = items.filter(it =>  hasNumericValue(it));
+  const usedPct     = manualItems.reduce((s, it) => s + (parseFloat(it.pct) || 0), 0);
+  const remaining   = Math.max(0, 100 - usedPct);
+  const totalValue  = valueItems.reduce((s, it) => s + parseValue(it.value), 0);
+
+  return items.map(it => {
+    const pct = hasNumericValue(it)
+      ? (totalValue > 0 ? parseValue(it.value) / totalValue * remaining : 0)
+      : (parseFloat(it.pct) || 0);
+    return { ...it, computedPct: pct };
+  });
+}
+
+// ── Canvas Rendering ────────────────────────────────────────────────────────
+const CANVAS_W = 1040;
+const CANVAS_H = 720;
+
+const canvas = document.getElementById('canvas');
+const ctx    = setupCanvas(canvas, CANVAS_W, CANVAS_H);
+
+let labelHitAreas  = []; // [{item, left, right, top, bottom}] — updated each preview render
+let centerHitAreas = []; // [{id, left, right, top, bottom}] — center text click targets
+
+function render(c, w, h, withBg) {
+  const s  = Math.min(w, h);          // reference size for all proportions
+  const cx = w / 2, cy = h / 2;
+  const outerR  = s * 0.27;
+  const ringW   = s * state.ringThickness / 100;
+  const innerR  = outerR - ringW;
+  const midR    = (outerR + innerR) / 2;
+  const GAP_RAD = (1.8 * Math.PI) / 180;
+
+  c.clearRect(0, 0, w, h);
+
+  if (withBg) {
+    c.fillStyle = state.bgColor;
+    c.fillRect(0, 0, w, h);
+  }
+
+  const segs = computeSegments();
+  if (!segs.length) return;
+
+  const totalPct = segs.reduce((sum, it) => sum + it.computedPct, 0);
+  if (totalPct <= 0) return;
+  const scale = (2 * Math.PI) / totalPct;
+
+  // Build arc data
+  const arcs = [];
+  let startAngle = -Math.PI / 2 + (state.rotation * Math.PI / 180);
+  for (const seg of segs) {
+    const span  = seg.computedPct * scale;
+    const sRad  = startAngle + GAP_RAD / 2;
+    const eRad  = startAngle + span - GAP_RAD / 2;
+    const mRad  = startAngle + span / 2;
+    arcs.push({ seg, sRad, eRad, mRad, span });
+    startAngle += span;
+  }
+
+  // Outer guide ring — one arc per segment, colored + gapped like the donut
+  const guideR  = outerR + ringW * 0.3;
+  const tickH   = ringW * 0.10;  // half-length of the | end cap
+  const guideW  = s * 0.002;
+  for (const { seg, sRad, eRad } of arcs) {
+    c.strokeStyle = seg.color + '66';
+    c.lineWidth   = guideW;
+    c.lineCap     = 'butt';
+
+    // Arc
+    c.beginPath();
+    c.arc(cx, cy, guideR, sRad, eRad);
+    c.stroke();
+
+    // | cap at start
+    c.beginPath();
+    c.moveTo(cx + (guideR - tickH) * Math.cos(sRad), cy + (guideR - tickH) * Math.sin(sRad));
+    c.lineTo(cx + (guideR + tickH) * Math.cos(sRad), cy + (guideR + tickH) * Math.sin(sRad));
+    c.stroke();
+
+    // | cap at end
+    c.beginPath();
+    c.moveTo(cx + (guideR - tickH) * Math.cos(eRad), cy + (guideR - tickH) * Math.sin(eRad));
+    c.lineTo(cx + (guideR + tickH) * Math.cos(eRad), cy + (guideR + tickH) * Math.sin(eRad));
+    c.stroke();
+  }
+
+  // Donut segments
+  for (const { seg, sRad, eRad } of arcs) {
+    c.beginPath();
+    c.arc(cx, cy, midR, sRad, eRad);
+    c.strokeStyle = seg.color;
+    c.lineWidth = ringW;
+    c.lineCap = 'butt';
+    c.stroke();
+  }
+
+  // Labels + leader lines
+  const leaderR   = outerR + ringW * 0.15;
+  const lineEndR  = outerR + ringW * 1.25;
+  const horizExt  = s * 0.038;
+  const lineColor = '#555555';
+
+  const pctFontSz  = s * state.pctFontSize  / 100;
+  const nameFontSz = s * state.nameFontSize / 100;
+  const valFontSz  = s * state.valFontSize  / 100;
+  const ff = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+
+  if (c === ctx) labelHitAreas = [];
+
+  for (const { seg, mRad } of arcs) {
+    const cosA    = Math.cos(mRad);
+    const sinA    = Math.sin(mRad);
+    const isRight = cosA >= 0;
+
+    // Line start (donut edge) and natural radial endpoint
+    const lx1      = cx + leaderR  * cosA;
+    const ly1      = cy + leaderR  * sinA;
+    const lx2      = cx + lineEndR * cosA;
+    const ly2      = cy + lineEndR * sinA;
+    const tickEndX = lx2 + (isRight ? horizExt : -horizExt);
+
+    // Per-label offset from drag
+    const origItem = state.items.find(it => it.id === seg.id);
+    const ox = origItem ? origItem.labelOffset.x : 0;
+    const oy = origItem ? origItem.labelOffset.y : 0;
+    const connX = tickEndX + ox;
+    const connY = ly2      + oy;
+
+    // Leader line: use radial+tick when at rest, straight line when moved
+    c.beginPath();
+    c.moveTo(lx1, ly1);
+    if (ox === 0 && oy === 0) {
+      c.lineTo(lx2, ly2);
+    }
+    c.lineTo(connX, connY);
+    c.strokeStyle = lineColor;
+    c.lineWidth = s * 0.0018;
+    c.stroke();
+
+    // Dot
+    c.beginPath();
+    c.arc(connX, connY, s * 0.004, 0, Math.PI * 2);
+    c.fillStyle = lineColor;
+    c.fill();
+
+    const textX     = connX + (isRight ? s * 0.01 : -s * 0.01);
+    const textAlign = isRight ? 'left' : 'right';
+    const baseY     = connY;
+
+    // Record hit area for mouse interaction (preview canvas only)
+    if (c === ctx && origItem) {
+      const hTop    = baseY - pctFontSz * 1.1;
+      const hBottom = baseY + pctFontSz * 0.72 + nameFontSz * 1.5;
+      const hW      = 180;
+      labelHitAreas.push({
+        item:   origItem,
+        left:   isRight ? textX      : textX - hW,
+        right:  isRight ? textX + hW : textX,
+        top:    hTop,
+        bottom: hBottom,
+      });
+    }
+
+    // Percentage (large, colored)
+    if (state.showPct) {
+      c.font = `700 ${pctFontSz}px ${ff}`;
+      c.fillStyle = seg.color;
+      c.textAlign = textAlign;
+      c.textBaseline = 'alphabetic';
+      c.fillText(Math.round(seg.computedPct) + '%', textX, baseY - s * 0.005);
+    }
+
+    // Label name
+    if (state.showLabel) {
+      c.font = `600 ${nameFontSz}px ${ff}`;
+      c.fillStyle = '#e4e4e4';
+      c.textAlign = textAlign;
+      c.textBaseline = 'alphabetic';
+      c.fillText(seg.label || 'Unnamed', textX, baseY + pctFontSz * 0.72);
+    }
+
+    // Value (optional) — shown as-is, user controls the text including any ~ prefix
+    if (state.showValue && seg.value !== null && seg.value !== '') {
+      c.font = `400 ${valFontSz}px ${ff}`;
+      c.fillStyle = '#777';
+      c.textAlign = textAlign;
+      c.textBaseline = 'alphabetic';
+      c.fillText(String(seg.value), textX, baseY + pctFontSz * 0.72 + nameFontSz * 1.3);
+    }
+  }
+
+  // Center text
+  c.textAlign = 'center';
+  if (c === ctx) centerHitAreas = [];
+
+  if (state.showCenterTitle && state.centerTitle) {
+    const sz = s * 0.028;
+    c.font = `500 ${sz}px ${ff}`;
+    c.fillStyle = '#888';
+    c.textBaseline = 'alphabetic';
+    const titleY = cy - s * 0.072;
+    c.fillText(state.centerTitle.toUpperCase(), cx, titleY);
+    if (c === ctx) {
+      const mw = c.measureText(state.centerTitle.toUpperCase()).width;
+      centerHitAreas.push({ id: 'centerTitle', left: cx - mw/2 - 8, right: cx + mw/2 + 8, top: titleY - sz, bottom: titleY + sz * 0.3 });
+    }
+  }
+  if (state.showCenterValue && state.centerValue) {
+    const sz = s * 0.105;
+    c.font = `700 ${sz}px ${ff}`;
+    c.fillStyle = '#fff';
+    c.textBaseline = 'middle';
+    c.fillText(state.centerValue, cx, cy);
+    if (c === ctx) {
+      const mw = c.measureText(state.centerValue).width;
+      centerHitAreas.push({ id: 'centerValue', left: cx - mw/2 - 8, right: cx + mw/2 + 8, top: cy - sz/2, bottom: cy + sz/2 });
+    }
+  }
+  if (state.showCenterSub && state.centerSub) {
+    const sz = s * 0.028;
+    c.font = `400 ${sz}px ${ff}`;
+    c.fillStyle = '#777';
+    c.textBaseline = 'top';
+    const subY = cy + s * 0.068;
+    c.fillText(state.centerSub, cx, subY);
+    if (c === ctx) {
+      const mw = c.measureText(state.centerSub).width;
+      centerHitAreas.push({ id: 'centerSub', left: cx - mw/2 - 8, right: cx + mw/2 + 8, top: subY, bottom: subY + sz * 1.3 });
+    }
+  }
+}
+
+function renderPreview() {
+  render(ctx, CANVAS_W, CANVAS_H, true);
+  persist();
+}
+
+// ── Persistence (localStorage) ────────────────────────────────────────────────
+const STORAGE_KEY = 'donut-builder-v1';
+
+function persist() {
+  saveState(STORAGE_KEY, {
+    items: state.items.map(({ id, label, value, pct, color, labelOffset }) =>
+      ({ id, label, value, pct, color, labelOffset })),
+    centerTitle:   state.centerTitle,
+    centerValue:   state.centerValue,
+    centerSub:     state.centerSub,
+    bgColor:       state.bgColor,
+    ringThickness: state.ringThickness,
+    rotation:      state.rotation,
+    pctFontSize:   state.pctFontSize,
+    nameFontSize:  state.nameFontSize,
+    valFontSize:   state.valFontSize,
+    showCenterTitle: state.showCenterTitle,
+    showCenterValue: state.showCenterValue,
+    showCenterSub:   state.showCenterSub,
+    showPct:   state.showPct,
+    showLabel: state.showLabel,
+    showValue: state.showValue,
+  });
+}
+
+function restore() {
+  const data = loadState(STORAGE_KEY);
+  if (!data || !Array.isArray(data.items) || !data.items.length) return false;
+
+  state.items         = data.items.map(it => ({ ...it, labelOffset: it.labelOffset || { x: 0, y: 0 } }));
+  state.centerTitle   = data.centerTitle   ?? state.centerTitle;
+  state.centerValue   = data.centerValue   ?? state.centerValue;
+  state.centerSub     = data.centerSub     ?? state.centerSub;
+  state.bgColor       = data.bgColor       ?? state.bgColor;
+  state.ringThickness = data.ringThickness ?? state.ringThickness;
+  state.rotation      = data.rotation      ?? state.rotation;
+  state.pctFontSize   = data.pctFontSize   ?? state.pctFontSize;
+  state.nameFontSize  = data.nameFontSize  ?? state.nameFontSize;
+  state.valFontSize   = data.valFontSize   ?? state.valFontSize;
+  state.showCenterTitle = data.showCenterTitle ?? true;
+  state.showCenterValue = data.showCenterValue ?? true;
+  state.showCenterSub   = data.showCenterSub   ?? true;
+  state.showPct         = data.showPct   ?? true;
+  state.showLabel       = data.showLabel ?? true;
+  state.showValue       = data.showValue ?? true;
+
+  // Keep nextId above any restored id
+  nextId = Math.max(0, ...state.items.map(i => i.id)) + 1;
+  return true;
+}
+
+// ── UI: Items list ──────────────────────────────────────────────────────────
+
+// Refresh all auto-pct displays and toggle readonly state — no DOM rebuild.
+function refreshPctFields() {
+  const segs = computeSegments();
+  state.items.forEach(item => {
+    const pctIn = document.querySelector(`.pct-wrap input[data-item-id="${item.id}"]`);
+    if (!pctIn) return;
+    const hasValue = hasNumericValue(item);
+    if (hasValue) {
+      const seg = segs.find(s => s.id === item.id);
+      pctIn.value    = seg ? Math.round(seg.computedPct * 10) / 10 : '';
+      pctIn.readOnly = true;
+      pctIn.classList.add('pct-auto');
+    } else {
+      pctIn.readOnly = false;
+      pctIn.classList.remove('pct-auto');
+      if (pctIn.value === '') pctIn.value = item.pct !== null ? item.pct : '';
+    }
+  });
+}
+
+function renderItems() {
+  const list = document.getElementById('items-list');
+  list.innerHTML = '';
+  const segs = computeSegments();
+
+  state.items.forEach((item, idx) => {
+    const computed = segs.find(s => s.id === item.id);
+
+    const row = document.createElement('div');
+    row.className = 'item-row';
+
+    // Color swatch
+    const swatchWrap = colorSwatch(item.color, hex => {
+      item.color = hex;
+      renderPreview();
+    });
+
+    // Label
+    const labelIn = document.createElement('input');
+    labelIn.type = 'text';
+    labelIn.value = item.label;
+    labelIn.placeholder = 'Label';
+    labelIn.dataset.itemId = item.id;
+    labelIn.addEventListener('input', e => { item.label = e.target.value; renderPreview(); });
+
+    // Value — text so user can type prefixes like ~
+    const valIn = document.createElement('input');
+    valIn.type = 'text';
+    valIn.value = item.value !== null ? item.value : '';
+    valIn.placeholder = 'Value';
+    valIn.addEventListener('input', e => {
+      item.value = e.target.value === '' ? null : e.target.value;
+      refreshPctFields();
+      renderPreview();
+    });
+
+    // Percentage — always present; readonly toggled in-place by refreshPctFields()
+    const pctWrap = document.createElement('div');
+    pctWrap.className = 'pct-wrap';
+    const pctIn = document.createElement('input');
+    pctIn.type = 'number';
+    pctIn.min = '0'; pctIn.max = '100';
+    pctIn.placeholder = '%';
+    pctIn.dataset.itemId = item.id;
+    if (hasNumericValue(item)) {
+      pctIn.value    = computed ? Math.round(computed.computedPct * 10) / 10 : '';
+      pctIn.readOnly = true;
+      pctIn.classList.add('pct-auto');
+    } else {
+      pctIn.value = item.pct !== null ? item.pct : '';
+    }
+    pctIn.addEventListener('input', e => {
+      if (pctIn.readOnly) return;
+      item.pct = e.target.value === '' ? 0 : parseFloat(e.target.value);
+      refreshPctFields(); // update other auto-pct fields
+      renderPreview();
+    });
+    pctWrap.appendChild(pctIn);
+
+    // Delete
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn-icon delete';
+    delBtn.innerHTML = '×';
+    delBtn.title = 'Remove';
+    delBtn.addEventListener('click', () => {
+      if (state.items.length > 1) {
+        state.items.splice(idx, 1);
+        renderItems();
+        renderPreview();
+      }
+    });
+
+    row.append(swatchWrap, labelIn, valIn, pctWrap, delBtn);
+    list.appendChild(row);
+  });
+}
+
+// ── Add item ────────────────────────────────────────────────────────────────
+document.getElementById('add-item-btn').addEventListener('click', () => {
+  const color = PALETTE[state.items.length % PALETTE.length];
+  state.items.push(mkItem('New segment', null, 0, color));
+  renderItems();
+  renderPreview();
+});
+
+// ── Center text ──────────────────────────────────────────────────────────────
+['centerTitle', 'centerValue', 'centerSub'].forEach(id => {
+  document.getElementById(id).addEventListener('input', e => {
+    state[id] = e.target.value;
+    renderPreview();
+  });
+});
+
+// ── Text visibility toggles ───────────────────────────────────────────────────
+function syncToggleBtn(id, on) {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  btn.textContent = on ? '●' : '○';
+  btn.classList.toggle('off', !on);
+}
+
+function bindToggle(id, key) {
+  document.getElementById(id).addEventListener('click', () => {
+    state[key] = !state[key];
+    syncToggleBtn(id, state[key]);
+    renderPreview();
+  });
+}
+
+bindToggle('toggleCenterTitle', 'showCenterTitle');
+bindToggle('toggleCenterValue', 'showCenterValue');
+bindToggle('toggleCenterSub',   'showCenterSub');
+bindToggle('toggleShowPct',     'showPct');
+bindToggle('toggleShowLabel',   'showLabel');
+bindToggle('toggleShowValue',   'showValue');
+
+// ── Background ────────────────────────────────────────────────────────────────
+const bgPicker = document.getElementById('bgColorPicker');
+const bgHex    = document.getElementById('bgColorHex');
+const bgSwatch = document.getElementById('bgSwatch');
+
+function applyBgColor(hex) {
+  state.bgColor = hex;
+  bgSwatch.style.background = hex;
+  bgPicker.value = /^#[0-9a-fA-F]{6}$/.test(hex) ? hex : '#111111';
+  bgHex.value = hex;
+  renderPreview();
+}
+
+bgPicker.addEventListener('input', e => applyBgColor(e.target.value));
+bgHex.addEventListener('input', e => {
+  if (/^#[0-9a-fA-F]{6}$/.test(e.target.value.trim())) applyBgColor(e.target.value.trim());
+});
+
+// ── Export ────────────────────────────────────────────────────────────────────
+function exportChart(withBg) {
+  exportPNG({
+    render, w: CANVAS_W, h: CANVAS_H, withBg,
+    filename: withBg ? 'donut.png' : 'donut-transparent.png',
+  });
+}
+
+// ── Chart sliders ─────────────────────────────────────────────────────────────
+document.getElementById('thicknessSlider').addEventListener('input', e => {
+  state.ringThickness = parseInt(e.target.value, 10);
+  document.getElementById('thicknessVal').textContent = state.ringThickness + '%';
+  renderPreview();
+});
+
+document.getElementById('rotationSlider').addEventListener('input', e => {
+  state.rotation = parseInt(e.target.value, 10);
+  document.getElementById('rotationVal').textContent = state.rotation + '°';
+  renderPreview();
+});
+
+document.getElementById('pctFontSlider').addEventListener('input', e => {
+  state.pctFontSize = parseFloat(e.target.value);
+  document.getElementById('pctFontVal').textContent = state.pctFontSize;
+  renderPreview();
+});
+
+document.getElementById('nameFontSlider').addEventListener('input', e => {
+  state.nameFontSize = parseFloat(e.target.value);
+  document.getElementById('nameFontVal').textContent = state.nameFontSize;
+  renderPreview();
+});
+
+document.getElementById('valFontSlider').addEventListener('input', e => {
+  state.valFontSize = parseFloat(e.target.value);
+  document.getElementById('valFontVal').textContent = state.valFontSize;
+  renderPreview();
+});
+
+// ── Canvas label interaction ──────────────────────────────────────────────────
+let dragState = null;
+
+function canvasPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - rect.left) * (CANVAS_W / rect.width),
+    y: (e.clientY - rect.top)  * (CANVAS_H / rect.height),
+  };
+}
+
+function hitLabel(x, y) {
+  for (const area of labelHitAreas) {
+    if (x >= area.left && x <= area.right && y >= area.top && y <= area.bottom)
+      return area.item;
+  }
+  return null;
+}
+
+function hitCenter(x, y) {
+  for (const area of centerHitAreas) {
+    if (x >= area.left && x <= area.right && y >= area.top && y <= area.bottom)
+      return area.id;
+  }
+  return null;
+}
+
+canvas.addEventListener('mousedown', e => {
+  const pos      = canvasPos(e);
+  const item     = hitLabel(pos.x, pos.y);
+  const centerId = !item ? hitCenter(pos.x, pos.y) : null;
+  if (!item && !centerId) return;
+  e.preventDefault();
+  dragState = {
+    item,
+    centerId,
+    startX: pos.x, startY: pos.y,
+    origX: item ? item.labelOffset.x : 0,
+    origY: item ? item.labelOffset.y : 0,
+    moved: false,
+  };
+  canvas.style.cursor = 'grabbing';
+});
+
+canvas.addEventListener('mousemove', e => {
+  const pos = canvasPos(e);
+  if (dragState) {
+    if (dragState.item) {
+      const dx = pos.x - dragState.startX;
+      const dy = pos.y - dragState.startY;
+      if (!dragState.moved && Math.hypot(dx, dy) > 4) dragState.moved = true;
+      if (dragState.moved) {
+        dragState.item.labelOffset.x = dragState.origX + dx;
+        dragState.item.labelOffset.y = dragState.origY + dy;
+        renderPreview();
+      }
+    }
+  } else {
+    canvas.style.cursor = (hitLabel(pos.x, pos.y) || hitCenter(pos.x, pos.y)) ? 'grab' : 'default';
+  }
+});
+
+canvas.addEventListener('mouseup', e => {
+  if (!dragState) return;
+  if (!dragState.moved) {
+    if (dragState.item) {
+      const input = document.querySelector(`input[type="text"][data-item-id="${dragState.item.id}"]`);
+      if (input) { input.focus(); input.select(); input.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    } else if (dragState.centerId) {
+      const input = document.getElementById(dragState.centerId);
+      if (input) { input.focus(); input.select(); input.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    }
+  }
+  dragState = null;
+  const pos = canvasPos(e);
+  canvas.style.cursor = (hitLabel(pos.x, pos.y) || hitCenter(pos.x, pos.y)) ? 'grab' : 'default';
+});
+
+canvas.addEventListener('mouseleave', () => {
+  if (dragState) {
+    dragState = null;
+    canvas.style.cursor = 'default';
+  }
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+restore();
+
+// Sync panel controls from state
+document.getElementById('centerTitle').value  = state.centerTitle;
+document.getElementById('centerValue').value  = state.centerValue;
+document.getElementById('centerSub').value    = state.centerSub;
+document.getElementById('thicknessSlider').value = state.ringThickness;
+document.getElementById('thicknessVal').textContent = state.ringThickness + '%';
+document.getElementById('rotationSlider').value = state.rotation;
+document.getElementById('rotationVal').textContent = state.rotation + '°';
+document.getElementById('pctFontSlider').value = state.pctFontSize;
+document.getElementById('pctFontVal').textContent = state.pctFontSize;
+document.getElementById('nameFontSlider').value = state.nameFontSize;
+document.getElementById('nameFontVal').textContent = state.nameFontSize;
+document.getElementById('valFontSlider').value = state.valFontSize;
+document.getElementById('valFontVal').textContent = state.valFontSize;
+
+// Sync visibility toggle buttons
+syncToggleBtn('toggleCenterTitle', state.showCenterTitle);
+syncToggleBtn('toggleCenterValue', state.showCenterValue);
+syncToggleBtn('toggleCenterSub',   state.showCenterSub);
+syncToggleBtn('toggleShowPct',     state.showPct);
+syncToggleBtn('toggleShowLabel',   state.showLabel);
+syncToggleBtn('toggleShowValue',   state.showValue);
+
+applyBgColor(state.bgColor);  // also sets picker + swatch
+
+renderItems();
+renderPreview();
+</script>
+</body>
+</html>

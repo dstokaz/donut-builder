@@ -1,5 +1,25 @@
 # Changelog
 
+## [2026-06-01] — Multi-chart builder: launcher + combo chart
+
+### Added
+- **Launcher hub** (`index.html`) — landing page with a card per chart type; pick Donut or Combo to open its builder
+- **Combo chart builder** (`combo.html`) — category-based chart with **flexible series**: add any number of series, each individually toggled **bar** or **line**
+  - **Single or dual Y-axis** — one shared scale, or assign each series to a left/right axis (for mixing units like count vs %)
+  - **Value matrix** — compact series × category table for data entry; blank cells create gaps in line series
+  - Display controls: grid, legend, value labels; bar width, line width, and axis/value/legend text-size sliders
+  - PNG export (with background / transparent) at 2× and per-browser persistence (`combo-builder-v1`)
+- **Shared foundation** — `shared.css` (dark UI) and `shared.js` (canvas setup, PNG export, persistence, palette, slider/toggle/swatch builders, `niceMax`) reused by both builders
+
+### Changed
+- The donut builder moved from `index.html` to `donut.html` and now uses the shared CSS/JS. Behavior and visuals are unchanged; existing saved charts are preserved (localStorage key `donut-builder-v1` kept)
+- Documented GitHub Pages publishing; all links/assets are relative so the app works under a repo subpath
+
+### Future (not yet implemented for combo)
+- Draggable labels, stacked bars, negative-value baseline
+
+---
+
 ## [2026-05-28] — Text controls & visibility toggles
 
 ### Added
