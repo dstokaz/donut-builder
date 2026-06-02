@@ -37,19 +37,6 @@ body {
   margin-bottom: 10px;
 }
 
-/* Back-to-launcher link */
-.back-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: #555;
-  text-decoration: none;
-  font-size: 12px;
-  transition: color 0.15s;
-  margin-bottom: 4px;
-}
-.back-link:hover { color: #aaa; }
-
 /* Items / rows */
 #items-list {
   display: flex;
@@ -258,6 +245,7 @@ input[type="range"]::-moz-range-thumb {
 
 /* ── Right Panel (preview) ─────────────────────────────────────── */
 #preview {
+  position: relative;
   flex: 1;
   display: flex;
   align-items: center;
@@ -266,6 +254,44 @@ input[type="range"]::-moz-range-thumb {
   background: #0e0e0e;
   overflow: hidden;
 }
+
+/* Chart-type switcher: floating pill bar centered over the preview */
+.chart-tabs {
+  position: absolute;
+  top: 16px; left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: #161616;
+  border: 1px solid #252525;
+  border-radius: 10px;
+  padding: 4px;
+  z-index: 10;
+}
+.chart-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 14px;
+  border-radius: 7px;
+  color: #888;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+.chart-tab:hover { color: #e0e0e0; background: #1e1e1e; }
+.chart-tab.active { background: #2d3a4d; color: #cfe0ff; }
+.chart-tab.active:hover { background: #2d3a4d; }
+.chart-tab.home {
+  padding: 6px 10px;
+  color: #555;
+  margin-right: 4px;
+  border-right: 1px solid #252525;
+  border-radius: 7px 0 0 7px;
+}
+.chart-tab.home:hover { color: #aaa; background: none; }
 
 #canvas {
   max-width: 100%;
