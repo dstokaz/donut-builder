@@ -57,10 +57,6 @@
         <span class="field-label">Legend</span>
         <button class="vis-toggle" id="toggleLegend" title="Show/hide">●</button>
       </div>
-      <div class="toggle-row">
-        <span class="field-label">Value labels</span>
-        <button class="vis-toggle" id="toggleValues" title="Show/hide">●</button>
-      </div>
       <div id="display-sliders"></div>
     </div>
 
@@ -71,6 +67,26 @@
           <input type="color" id="bgColorPicker" value="#111111">
         </div>
         <input type="text" id="bgColorHex" value="#111111" placeholder="#111111">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Import</div>
+      <button id="toggleImport" class="btn-add">Import JSON…</button>
+      <div id="import-panel" hidden>
+        <textarea id="importText" class="import-textarea" spellcheck="false"
+          placeholder='{
+  "categories": ["Q1", "Q2", "Q3", "Q4"],
+  "series": [
+    { "name": "Revenue", "values": [120, 150, 170, 140] },
+    { "name": "Profit",  "values": [40, 55, 60, 52] }
+  ]
+}'></textarea>
+        <div id="importMsg" class="import-msg"></div>
+        <div class="export-btns">
+          <button class="btn-export primary" id="applyImport">Apply</button>
+          <button class="btn-export" id="cancelImport">Cancel</button>
+        </div>
       </div>
     </div>
 
@@ -104,8 +120,8 @@
 // ── State ──────────────────────────────────────────────────────────────────
 let nextId = 1;
 
-function mkSeries(name, color, kind, axis, values) {
-  return { id: nextId++, name, color, kind, axis, values: values.slice() };
+function mkSeries(name, color, kind, axis, values, showLabels = false, prefix = '', suffix = '') {
+  return { id: nextId++, name, color, kind, axis, showLabels, prefix, suffix, values: values.slice() };
 }
 
 const state = {
@@ -116,7 +132,6 @@ const state = {
   dualAxis: true,
   showGrid: true,
   showLegend: true,
-  showValues: false,
   bgColor: '#111111',
   barWidth: 0.7,        // fraction of a category slot used by the bar group
   lineWidth: 3,         // px
@@ -126,8 +141,8 @@ const state = {
 };
 
 state.series = [
-  mkSeries('Revenue',  '#2A7AFF', 'bar',  'left',  [120, 150, 170, 140]),
-  mkSeries('Growth %', '#E84545', 'line', 'right', [10, 18, 12, 22]),
+  mkSeries('Revenue',  '#2A7AFF', 'bar',  'left',  [120, 150, 170, 140], true),
+  mkSeries('Growth %', '#E84545', 'line', 'right', [10, 18, 12, 22], false, '', '%'),
 ];
 
 // Effective axis honoring the dual-axis toggle (single axis => everything left).
@@ -147,6 +162,27 @@ function fmtNum(n) {
   if (!isFinite(n)) return '';
   if (Number.isInteger(n)) return n.toLocaleString();
   return (Math.round(n * 10) / 10).toLocaleString();
+}
+
+// Draw a value label as a rounded "pill" tinted with the series color, centered on
+// `cx` with its bottom edge at `bottomY`. Keeps labels readable over bars/grid/bg.
+function drawValueLabel(c, text, cx, bottomY, color) {
+  const fs = state.valueFontSize;
+  c.font = `600 ${fs}px ${FF}`;
+  const padX = 6, padY = 3;
+  const w = c.measureText(text).width + padX * 2;
+  const h = fs + padY * 2;
+  const x = cx - w / 2;
+  const y = bottomY - h;
+  const r = Math.min(6, h / 2);
+  c.beginPath();
+  c.roundRect(x, y, w, h, r);
+  c.fillStyle = hexToRgba(color, 0.22);
+  c.fill();
+  c.fillStyle = '#f0f0f0';
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  c.fillText(text, cx, y + h / 2);
 }
 
 // ── Canvas Rendering ────────────────────────────────────────────────────────
@@ -283,13 +319,8 @@ function render(c, w, h, withBg) {
       c.fillStyle = s.color;
       c.fillRect(bx, by, bw, bh);
 
-      if (state.showValues) {
-        c.font = `500 ${state.valueFontSize}px ${FF}`;
-        c.fillStyle = '#cfcfcf';
-        c.textAlign = 'center';
-        c.textBaseline = 'bottom';
-        c.fillText(fmtNum(v), bx + bw / 2, by - 3);
-      }
+      if (s.showLabels)
+        drawValueLabel(c, (s.prefix || '') + fmtNum(v) + (s.suffix || ''), bx + bw / 2, by - 3, s.color);
     });
   });
 
@@ -328,13 +359,9 @@ function render(c, w, h, withBg) {
       c.arc(p.x, p.y, state.lineWidth * 1.4, 0, Math.PI * 2);
       c.fillStyle = s.color;
       c.fill();
-      if (state.showValues) {
-        c.font = `500 ${state.valueFontSize}px ${FF}`;
-        c.fillStyle = '#cfcfcf';
-        c.textAlign = 'center';
-        c.textBaseline = 'bottom';
-        c.fillText(fmtNum(p.v), p.x, p.y - state.lineWidth * 1.4 - 3);
-      }
+      if (s.showLabels)
+        drawValueLabel(c, (s.prefix || '') + fmtNum(p.v) + (s.suffix || ''),
+                       p.x, p.y - state.lineWidth * 1.4 - 3, s.color);
     });
   });
 }
@@ -352,12 +379,11 @@ function persist() {
     title: state.title,
     showTitle: state.showTitle,
     categories: state.categories,
-    series: state.series.map(({ id, name, color, kind, axis, values }) =>
-      ({ id, name, color, kind, axis, values })),
+    series: state.series.map(({ id, name, color, kind, axis, showLabels, prefix, suffix, values }) =>
+      ({ id, name, color, kind, axis, showLabels, prefix, suffix, values })),
     dualAxis: state.dualAxis,
     showGrid: state.showGrid,
     showLegend: state.showLegend,
-    showValues: state.showValues,
     bgColor: state.bgColor,
     barWidth: state.barWidth,
     lineWidth: state.lineWidth,
@@ -374,16 +400,20 @@ function restore() {
   state.title      = data.title      ?? state.title;
   state.showTitle  = data.showTitle  ?? true;
   state.categories = Array.isArray(data.categories) && data.categories.length ? data.categories : state.categories;
+  // Migration: older saves used a single global `showValues`; fall back to it per series.
+  const legacyLabels = data.showValues === true;
   state.series     = data.series.map(s => ({
     id: s.id, name: s.name, color: s.color,
     kind: s.kind === 'line' ? 'line' : 'bar',
     axis: s.axis === 'right' ? 'right' : 'left',
+    showLabels: s.showLabels ?? legacyLabels,
+    prefix: s.prefix ?? '',
+    suffix: s.suffix ?? '',
     values: Array.isArray(s.values) ? s.values : [],
   }));
   state.dualAxis   = data.dualAxis   ?? true;
   state.showGrid   = data.showGrid   ?? true;
   state.showLegend = data.showLegend ?? true;
-  state.showValues = data.showValues ?? false;
   state.bgColor    = data.bgColor    ?? state.bgColor;
   state.barWidth   = data.barWidth   ?? state.barWidth;
   state.lineWidth  = data.lineWidth  ?? state.lineWidth;
@@ -511,11 +541,39 @@ function renderSeries() {
     const axisToggle = makeSegToggle(
       [{ label: 'Left', value: 'left' }, { label: 'Right', value: 'right' }],
       s.axis, !state.dualAxis,
-      v => { s.axis = v; renderPreview(); }
+      v => { s.axis = v; renderSeries(); renderPreview(); }
     );
 
     controls.append(kindToggle, axisToggle);
-    card.append(top, controls);
+
+    const labelsRow = document.createElement('div');
+    labelsRow.className = 'toggle-row';
+    const labelsLabel = document.createElement('span');
+    labelsLabel.className = 'field-label';
+    labelsLabel.textContent = 'Data labels';
+
+    const affix = (value, ph, onChange) => {
+      const inp = document.createElement('input');
+      inp.type = 'text';
+      inp.className = 'label-affix';
+      inp.value = value;
+      inp.placeholder = ph;
+      inp.maxLength = 4;
+      inp.title = ph === 'pre' ? 'Label prefix (e.g. $)' : 'Label suffix (e.g. %)';
+      inp.addEventListener('input', e => { onChange(e.target.value); renderPreview(); });
+      return inp;
+    };
+
+    const right = document.createElement('div');
+    right.className = 'labels-right';
+    right.append(
+      affix(s.prefix, 'pre', v => { s.prefix = v; }),
+      affix(s.suffix, 'suf', v => { s.suffix = v; }),
+      visToggle(s.showLabels, on => { s.showLabels = on; renderPreview(); }),
+    );
+    labelsRow.append(labelsLabel, right);
+
+    card.append(top, controls, labelsRow);
     list.appendChild(card);
   });
 }
@@ -606,7 +664,6 @@ function bindToggle(id, key, after) {
 bindToggle('toggleTitle',  'showTitle');
 bindToggle('toggleGrid',   'showGrid');
 bindToggle('toggleLegend', 'showLegend');
-bindToggle('toggleValues', 'showValues');
 bindToggle('toggleDual',   'dualAxis', renderSeries);  // re-enable/disable axis toggles
 
 document.getElementById('comboTitle').addEventListener('input', e => {
@@ -669,6 +726,76 @@ function exportChart(withBg) {
   });
 }
 
+// ── Import (paste JSON) ────────────────────────────────────────────────────────
+// Accepts a minimal data shape:
+//   { "categories": ["Q1", ...], "series": [ { "name": "Revenue", "values": [..] } ] }
+// Kind/axis/color are auto-assigned; the first series defaults to bars, the rest lines.
+const importPanel = document.getElementById('import-panel');
+const importText  = document.getElementById('importText');
+const importMsg   = document.getElementById('importMsg');
+
+function showImportMsg(text, ok) {
+  importMsg.textContent = text;
+  importMsg.classList.toggle('error', !ok);
+  importMsg.classList.toggle('ok', !!ok && !!text);
+}
+
+function applyImport() {
+  let data;
+  try {
+    data = JSON.parse(importText.value);
+  } catch (err) {
+    showImportMsg('Invalid JSON: ' + err.message, false);
+    return;
+  }
+
+  const cats = Array.isArray(data?.categories) ? data.categories.map(String) : null;
+  const rawSeries = Array.isArray(data?.series) ? data.series : null;
+  if (!cats || !cats.length) {
+    showImportMsg('Need a non-empty "categories" array.', false);
+    return;
+  }
+  if (!rawSeries || !rawSeries.length) {
+    showImportMsg('Need a non-empty "series" array.', false);
+    return;
+  }
+  if (!rawSeries.every(s => s && Array.isArray(s.values))) {
+    showImportMsg('Each series needs a "values" array.', false);
+    return;
+  }
+
+  nextId = 1;
+  state.categories = cats;
+  state.series = rawSeries.map((s, i) => {
+    const values = s.values.map(v => (v === null || v === '' ? null : Number(v)));
+    const series = mkSeries(
+      s.name != null ? String(s.name) : 'Series ' + (i + 1),
+      PALETTE[i % PALETTE.length],
+      i === 0 ? 'bar' : 'line',
+      'left',
+      values,
+    );
+    alignValues(series);
+    return series;
+  });
+
+  showImportMsg('Imported ' + state.series.length + ' series × ' + cats.length + ' categories.', true);
+  renderCategories();
+  renderSeries();
+  renderMatrix();
+  renderPreview();
+}
+
+document.getElementById('toggleImport').addEventListener('click', () => {
+  importPanel.hidden = !importPanel.hidden;
+  if (!importPanel.hidden) importText.focus();
+});
+document.getElementById('applyImport').addEventListener('click', applyImport);
+document.getElementById('cancelImport').addEventListener('click', () => {
+  importPanel.hidden = true;
+  showImportMsg('', true);
+});
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 restore();
 
@@ -676,7 +803,6 @@ document.getElementById('comboTitle').value = state.title;
 syncToggleBtn('toggleTitle',  state.showTitle);
 syncToggleBtn('toggleGrid',   state.showGrid);
 syncToggleBtn('toggleLegend', state.showLegend);
-syncToggleBtn('toggleValues', state.showValues);
 syncToggleBtn('toggleDual',   state.dualAxis);
 
 applyBgColor(state.bgColor);

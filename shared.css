@@ -159,6 +159,14 @@ input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; }
   margin-bottom: 8px;
 }
 
+.labels-right { display: flex; align-items: center; gap: 6px; }
+.label-affix {
+  width: 40px;
+  padding: 3px 5px;
+  font-size: 12px;
+  text-align: center;
+}
+
 .vis-toggle {
   background: none;
   border: none;
@@ -242,6 +250,28 @@ input[type="range"]::-moz-range-thumb {
   color: #7bc97b;
 }
 .btn-export.primary:hover { background: #213221; border-color: #3a6a3a; }
+
+/* ── Import (paste JSON) ───────────────────────────────────────── */
+#import-panel { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.import-textarea {
+  background: #1e1e1e;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 8px;
+  outline: none;
+  width: 100%;
+  min-height: 150px;
+  resize: vertical;
+  transition: border-color 0.15s;
+}
+.import-textarea:focus { border-color: #444; }
+.import-msg { font-size: 11px; min-height: 14px; }
+.import-msg.error { color: #e07b7b; }
+.import-msg.ok { color: #7bc97b; }
 
 /* ── Right Panel (preview) ─────────────────────────────────────── */
 #preview {

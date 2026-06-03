@@ -112,6 +112,14 @@ function colorSwatch(value, onInput) {
   return wrap;
 }
 
+// Convert a #RRGGBB hex color to an rgba() string at the given alpha (0–1).
+function hexToRgba(hex, alpha) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
+  if (!m) return `rgba(128,128,128,${alpha})`;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+}
+
 // Round a raw maximum up to a "nice" axis bound (1/2/2.5/5 × 10^n).
 function niceMax(raw) {
   if (!isFinite(raw) || raw <= 0) return 10;
