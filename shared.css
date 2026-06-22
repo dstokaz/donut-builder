@@ -159,6 +159,13 @@ input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; }
   margin-bottom: 8px;
 }
 
+.field-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+
 .labels-right { display: flex; align-items: center; gap: 6px; }
 .label-affix {
   width: 40px;
@@ -272,14 +279,17 @@ input[type="range"]::-moz-range-thumb {
 .import-msg { font-size: 11px; min-height: 14px; }
 .import-msg.error { color: #e07b7b; }
 .import-msg.ok { color: #7bc97b; }
+.import-hint { font-size: 11px; line-height: 1.4; color: #777; }
 
 /* ── Right Panel (preview) ─────────────────────────────────────── */
 #preview {
   position: relative;
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 14px;
   padding: 32px;
   background: #0e0e0e;
   overflow: hidden;
@@ -325,10 +335,56 @@ input[type="range"]::-moz-range-thumb {
 
 #canvas {
   max-width: 100%;
-  max-height: calc(100vh - 64px);
+  max-height: calc(100vh - 130px);
   border-radius: 10px;
   display: block;
+  transition: transform 0.08s ease-out;
 }
+
+/* Zoom control: centered pill sitting just below the chart (purely visual —
+   never affects export). position:relative + z-index keeps it above the
+   scaled canvas when zoomed in. */
+.zoom-ctl {
+  position: relative;
+  z-index: 11;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: #161616;
+  border: 1px solid #252525;
+  border-radius: 10px;
+  padding: 4px;
+}
+.zoom-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px; height: 28px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #888;
+  cursor: pointer;
+  border-radius: 7px;
+  transition: all 0.15s;
+}
+.zoom-btn:hover { color: #e0e0e0; background: #1e1e1e; }
+.zoom-pct {
+  min-width: 46px;
+  text-align: center;
+  border: none;
+  background: none;
+  color: #aaa;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 6px 4px;
+  border-radius: 7px;
+  font-variant-numeric: tabular-nums;
+  transition: all 0.15s;
+}
+.zoom-pct:hover { color: #e0e0e0; background: #1e1e1e; }
 
 /* ── Combo-builder additions ─────────────────────────────────────── */
 

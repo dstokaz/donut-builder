@@ -57,6 +57,14 @@
         <span class="field-label">Legend</span>
         <button class="vis-toggle" id="toggleLegend" title="Show/hide">●</button>
       </div>
+      <div class="field-stack" id="legendPosRow">
+        <span class="field-label">Legend position</span>
+        <div id="legendPosCtl"></div>
+      </div>
+      <div class="field-stack">
+        <span class="field-label">Aspect ratio</span>
+        <div id="aspectCtl"></div>
+      </div>
       <div id="display-sliders"></div>
     </div>
 
@@ -82,6 +90,8 @@
     { "name": "Profit",  "values": [40, 55, 60, 52] }
   ]
 }'></textarea>
+        <div class="import-hint">Accepts plain data, or a full config exported below
+          (colors, sizes, background, layout).</div>
         <div id="importMsg" class="import-msg"></div>
         <div class="export-btns">
           <button class="btn-export primary" id="applyImport">Apply</button>
@@ -95,6 +105,7 @@
       <div class="export-btns">
         <button class="btn-export primary" onclick="exportChart(true)">Export PNG</button>
         <button class="btn-export" onclick="exportChart(false)">Export PNG (transparent)</button>
+        <button class="btn-export" onclick="exportJSON()">Export JSON (data + config)</button>
       </div>
     </div>
 
@@ -132,6 +143,8 @@ const state = {
   dualAxis: true,
   showGrid: true,
   showLegend: true,
+  legendPos: 'top',     // 'top' | 'bottom' | 'left' | 'right'
+  aspect: '16:9',       // '16:9' | '3:2' | '4:3' | '1:1'
   bgColor: '#111111',
   barWidth: 0.7,        // fraction of a category slot used by the bar group
   lineWidth: 3,         // px
@@ -185,14 +198,67 @@ function drawValueLabel(c, text, cx, bottomY, color) {
   c.fillText(text, cx, y + h / 2);
 }
 
+// Break `text` into lines that each fit within `maxW` px under the current
+// c.font. Wraps on spaces; hard-breaks any single word wider than maxW. Caps at
+// `maxLines` lines, appending an ellipsis if content remains. Always returns ≥1 line.
+function wrapLabel(c, text, maxW, maxLines = 3) {
+  const fits = s => c.measureText(s).width <= maxW;
+  // Split words; hard-break any word that can't fit on its own line.
+  const words = [];
+  text.split(/\s+/).filter(Boolean).forEach(word => {
+    if (fits(word)) { words.push(word); return; }
+    let chunk = '';
+    for (const ch of word) {
+      if (chunk && !fits(chunk + ch)) { words.push(chunk); chunk = ''; }
+      chunk += ch;
+    }
+    if (chunk) words.push(chunk);
+  });
+  if (!words.length) return [text];
+
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    const next = line ? line + ' ' + word : word;
+    if (line && !fits(next)) { lines.push(line); line = word; }
+    else line = next;
+  }
+  if (line) lines.push(line);
+
+  if (lines.length <= maxLines) return lines;
+  // Truncate to maxLines, ellipsizing the last visible line.
+  const kept = lines.slice(0, maxLines);
+  let last = kept[maxLines - 1];
+  while (last && !fits(last + '…')) last = last.slice(0, -1);
+  kept[maxLines - 1] = last + '…';
+  return kept;
+}
+
 // ── Canvas Rendering ────────────────────────────────────────────────────────
-const CANVAS_W = 1040;
-const CANVAS_H = 720;
+// Canvas pixel size per aspect ratio (width is the long side, kept ~1040 so the
+// chart stays crisp; height follows the ratio). 1:1 is shrunk to fit the viewport.
+const ASPECTS = {
+  '21:9': [1040, 446],   // ultrawide / cinematic
+  '16:9': [1040, 585],
+  '3:2':  [1040, 693],
+  '4:3':  [1040, 780],
+  '1:1':  [820, 820],
+};
+let [CANVAS_W, CANVAS_H] = ASPECTS[state.aspect] || ASPECTS['16:9'];
 const FF = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 const TICKS = 5;
 
 const canvas = document.getElementById('canvas');
-const ctx    = setupCanvas(canvas, CANVAS_W, CANVAS_H);
+let ctx      = setupCanvas(canvas, CANVAS_W, CANVAS_H);
+
+// Switch aspect ratio: resize the canvas backing store and repaint.
+function setAspect(a) {
+  if (!ASPECTS[a]) return;
+  state.aspect = a;
+  [CANVAS_W, CANVAS_H] = ASPECTS[a];
+  ctx = setupCanvas(canvas, CANVAS_W, CANVAS_H);
+  renderPreview();
+}
 
 function render(c, w, h, withBg) {
   c.clearRect(0, 0, w, h);
@@ -208,17 +274,45 @@ function render(c, w, h, withBg) {
   const leftMax  = axisMaxFor(leftList);
   const rightMax = axisMaxFor(rightList);
 
-  // Plot rectangle
+  // Legend metrics (computed up front so the plot can reserve space for it).
+  const lf = state.legendFontSize;
+  const legendOn = state.showLegend && state.series.length > 0;
+  const legPos = state.legendPos || 'top';
+  const glyphW = 18, glyphGap = 7, itemGapX = 22;
+  let legItemW = [], legBandH = 0, legBandW = 0;
+  if (legendOn) {
+    c.font = `500 ${lf}px ${FF}`;
+    legItemW = state.series.map(s => glyphW + glyphGap + c.measureText(s.name || 'Series').width);
+    legBandH = Math.round(lf * 1.5) + 12;          // height of a top/bottom legend row
+    legBandW = Math.max(...legItemW) + 28;         // width of a left/right legend column
+  }
+
+  // Plot rectangle — reserve space on whichever side holds the legend; the
+  // bottom strip also grows with the number of wrapped X-axis label lines.
   let top = 28;
   if (state.showTitle && state.title) top += 34;
-  if (state.showLegend) top += 30;
-  const plotTop    = top;
-  const plotBottom = h - 58;
-  const plotLeft   = 72;
-  const plotRight  = w - (hasRight ? 72 : 32);
+  if (legendOn && legPos === 'top') top += legBandH;
+  const plotTop   = top;
+  let plotLeft    = 72;
+  let plotRight   = w - (hasRight ? 72 : 32);
+  if (legendOn && legPos === 'left')  plotLeft  += legBandW;
+  if (legendOn && legPos === 'right') plotRight -= legBandW;
   const plotW = plotRight - plotLeft;
+  if (plotW <= 0) return;
+
+  // Wrap X-axis category labels to slot width; reserve a bottom strip tall
+  // enough for the tallest wrapped label (min matches the original single-line gap).
+  const af = state.axisFontSize;
+  const slotW = plotW / cats.length;
+  const lineHeight = Math.round(af * 1.25);
+  c.font = `500 ${af}px ${FF}`;
+  const wrappedLabels = cats.map(cat => wrapLabel(c, String(cat), slotW - 8));
+  const maxLines = Math.max(1, ...wrappedLabels.map(l => l.length));
+  let bottomPad = Math.max(58, 12 + maxLines * lineHeight + 8);
+  if (legendOn && legPos === 'bottom') bottomPad += legBandH;
+  const plotBottom = h - bottomPad;
   const plotH = plotBottom - plotTop;
-  if (plotW <= 0 || plotH <= 0) return;
+  if (plotH <= 0) return;
 
   // Title
   if (state.showTitle && state.title) {
@@ -229,35 +323,42 @@ function render(c, w, h, withBg) {
     c.fillText(state.title, w / 2, 40);
   }
 
-  // Legend (row centered near the top)
-  if (state.showLegend) {
-    const lf = state.legendFontSize;
+  // Legend — placed on the side chosen via state.legendPos.
+  if (legendOn) {
     c.font = `500 ${lf}px ${FF}`;
     c.textBaseline = 'middle';
-    const gap = 22, glyphW = 18, glyphGap = 7;
-    const widths = state.series.map(s => glyphW + glyphGap + c.measureText(s.name || 'Series').width);
-    const totalW = widths.reduce((a, b) => a + b, 0) + gap * (state.series.length - 1);
-    let lx = w / 2 - totalW / 2;
-    const ly = (state.showTitle && state.title ? 62 : 36) + lf / 2;
-    state.series.forEach((s, i) => {
+    const drawItem = (s, gx, cy) => {
       if (s.kind === 'bar') {
         c.fillStyle = s.color;
-        c.fillRect(lx, ly - 6, glyphW, 12);
+        c.fillRect(gx, cy - 6, glyphW, 12);
       } else {
         c.strokeStyle = s.color;
         c.lineWidth = 3;
-        c.beginPath(); c.moveTo(lx, ly); c.lineTo(lx + glyphW, ly); c.stroke();
-        c.beginPath(); c.arc(lx + glyphW / 2, ly, 3, 0, Math.PI * 2); c.fillStyle = s.color; c.fill();
+        c.beginPath(); c.moveTo(gx, cy); c.lineTo(gx + glyphW, cy); c.stroke();
+        c.beginPath(); c.arc(gx + glyphW / 2, cy, 3, 0, Math.PI * 2); c.fillStyle = s.color; c.fill();
       }
       c.fillStyle = '#cfcfcf';
       c.textAlign = 'left';
-      c.fillText(s.name || 'Series', lx + glyphW + glyphGap, ly);
-      lx += widths[i] + gap;
-    });
+      c.fillText(s.name || 'Series', gx + glyphW + glyphGap, cy);
+    };
+
+    if (legPos === 'left' || legPos === 'right') {
+      // Vertical stack, centered on the plot's vertical span.
+      const itemH = Math.round(lf * 1.7);
+      const blockH = state.series.length * itemH;
+      let cy = plotTop + plotH / 2 - blockH / 2 + itemH / 2;
+      const gx = legPos === 'left' ? 14 : (w - legBandW + 8);
+      state.series.forEach(s => { drawItem(s, gx, cy); cy += itemH; });
+    } else {
+      // Horizontal row, centered across the canvas.
+      const totalW = legItemW.reduce((a, b) => a + b, 0) + itemGapX * (state.series.length - 1);
+      let gx = w / 2 - totalW / 2;
+      const cy = legPos === 'top' ? plotTop - legBandH / 2 : h - legBandH / 2;
+      state.series.forEach((s, i) => { drawItem(s, gx, cy); gx += legItemW[i] + itemGapX; });
+    }
   }
 
   // Grid + Y axis ticks/labels
-  const af = state.axisFontSize;
   c.font = `400 ${af}px ${FF}`;
   c.textBaseline = 'middle';
   for (let i = 0; i <= TICKS; i++) {
@@ -288,15 +389,16 @@ function render(c, w, h, withBg) {
   c.lineWidth = 1.5;
   c.beginPath(); c.moveTo(plotLeft, plotBottom); c.lineTo(plotRight, plotBottom); c.stroke();
 
-  const slotW = plotW / cats.length;
-
-  // X axis category labels
+  // X axis category labels (wrapped onto multiple lines, centered per slot)
   c.font = `500 ${af}px ${FF}`;
   c.fillStyle = '#aaa';
   c.textAlign = 'center';
   c.textBaseline = 'top';
   cats.forEach((cat, i) => {
-    c.fillText(cat, plotLeft + slotW * (i + 0.5), plotBottom + 10);
+    const cx = plotLeft + slotW * (i + 0.5);
+    wrappedLabels[i].forEach((line, li) => {
+      c.fillText(line, cx, plotBottom + 10 + li * lineHeight);
+    });
   });
 
   const scaleFor = s => (effAxis(s) === 'right' && state.dualAxis) ? rightMax : leftMax;
@@ -374,23 +476,32 @@ function renderPreview() {
 // ── Persistence ───────────────────────────────────────────────────────────────
 const STORAGE_KEY = 'combo-builder-v1';
 
-function persist() {
-  saveState(STORAGE_KEY, {
+// Full, portable snapshot of the chart: data + visual configuration. Shared by
+// localStorage persistence and JSON export so the two never drift. Series ids are
+// internal-only and omitted (import/restore reassign them).
+function getConfig() {
+  return {
     title: state.title,
     showTitle: state.showTitle,
-    categories: state.categories,
-    series: state.series.map(({ id, name, color, kind, axis, showLabels, prefix, suffix, values }) =>
-      ({ id, name, color, kind, axis, showLabels, prefix, suffix, values })),
+    categories: state.categories.slice(),
+    series: state.series.map(({ name, color, kind, axis, showLabels, prefix, suffix, values }) =>
+      ({ name, color, kind, axis, showLabels, prefix, suffix, values: values.slice() })),
     dualAxis: state.dualAxis,
     showGrid: state.showGrid,
     showLegend: state.showLegend,
+    legendPos: state.legendPos,
+    aspect: state.aspect,
     bgColor: state.bgColor,
     barWidth: state.barWidth,
     lineWidth: state.lineWidth,
     axisFontSize: state.axisFontSize,
     valueFontSize: state.valueFontSize,
     legendFontSize: state.legendFontSize,
-  });
+  };
+}
+
+function persist() {
+  saveState(STORAGE_KEY, getConfig());
 }
 
 function restore() {
@@ -402,8 +513,8 @@ function restore() {
   state.categories = Array.isArray(data.categories) && data.categories.length ? data.categories : state.categories;
   // Migration: older saves used a single global `showValues`; fall back to it per series.
   const legacyLabels = data.showValues === true;
-  state.series     = data.series.map(s => ({
-    id: s.id, name: s.name, color: s.color,
+  state.series     = data.series.map((s, i) => ({
+    id: s.id ?? (i + 1), name: s.name, color: s.color,
     kind: s.kind === 'line' ? 'line' : 'bar',
     axis: s.axis === 'right' ? 'right' : 'left',
     showLabels: s.showLabels ?? legacyLabels,
@@ -414,6 +525,8 @@ function restore() {
   state.dualAxis   = data.dualAxis   ?? true;
   state.showGrid   = data.showGrid   ?? true;
   state.showLegend = data.showLegend ?? true;
+  state.legendPos  = ['top', 'bottom', 'left', 'right'].includes(data.legendPos) ? data.legendPos : 'top';
+  state.aspect     = ASPECTS[data.aspect] ? data.aspect : '16:9';
   state.bgColor    = data.bgColor    ?? state.bgColor;
   state.barWidth   = data.barWidth   ?? state.barWidth;
   state.lineWidth  = data.lineWidth  ?? state.lineWidth;
@@ -661,9 +774,37 @@ function bindToggle(id, key, after) {
   });
 }
 
+// Legend position selector (hidden while the legend is off).
+function buildLegendPos() {
+  const host = document.getElementById('legendPosCtl');
+  host.innerHTML = '';
+  host.appendChild(makeSegToggle(
+    [
+      { label: 'Top',    value: 'top' },
+      { label: 'Bottom', value: 'bottom' },
+      { label: 'Left',   value: 'left' },
+      { label: 'Right',  value: 'right' },
+    ],
+    state.legendPos, false,
+    v => { state.legendPos = v; buildLegendPos(); renderPreview(); },
+  ));
+  document.getElementById('legendPosRow').hidden = !state.showLegend;
+}
+
+// Aspect-ratio selector — resizes the canvas to the chosen ratio.
+function buildAspect() {
+  const host = document.getElementById('aspectCtl');
+  host.innerHTML = '';
+  host.appendChild(makeSegToggle(
+    Object.keys(ASPECTS).map(r => ({ label: r, value: r })),
+    state.aspect, false,
+    v => { setAspect(v); buildAspect(); },
+  ));
+}
+
 bindToggle('toggleTitle',  'showTitle');
 bindToggle('toggleGrid',   'showGrid');
-bindToggle('toggleLegend', 'showLegend');
+bindToggle('toggleLegend', 'showLegend', buildLegendPos);
 bindToggle('toggleDual',   'dualAxis', renderSeries);  // re-enable/disable axis toggles
 
 document.getElementById('comboTitle').addEventListener('input', e => {
@@ -726,10 +867,19 @@ function exportChart(withBg) {
   });
 }
 
+// Save the full config (data + colors + sizes + layout) as a JSON file that can
+// be re-imported via the Import panel.
+function exportJSON() {
+  downloadText('combo-chart.json', JSON.stringify(getConfig(), null, 2));
+}
+
 // ── Import (paste JSON) ────────────────────────────────────────────────────────
 // Accepts a minimal data shape:
 //   { "categories": ["Q1", ...], "series": [ { "name": "Revenue", "values": [..] } ] }
-// Kind/axis/color are auto-assigned; the first series defaults to bars, the rest lines.
+// …or a full config as produced by Export JSON, where each series may also carry
+// "color"/"kind"/"axis"/"showLabels"/"prefix"/"suffix" and the top level may carry
+// visual settings (title, dualAxis, showGrid, legend, aspect, bgColor, sizes…).
+// Anything omitted falls back to a sensible default — first series bars, rest lines.
 const importPanel = document.getElementById('import-panel');
 const importText  = document.getElementById('importText');
 const importMsg   = document.getElementById('importMsg');
@@ -739,6 +889,22 @@ function showImportMsg(text, ok) {
   importMsg.classList.toggle('error', !ok);
   importMsg.classList.toggle('ok', !!ok && !!text);
 }
+
+// Push the current state into every panel control (inputs, toggles, sliders,
+// selectors, background). Shared by import and initial load so they can't drift.
+function syncControls() {
+  document.getElementById('comboTitle').value = state.title;
+  syncToggleBtn('toggleTitle',  state.showTitle);
+  syncToggleBtn('toggleGrid',   state.showGrid);
+  syncToggleBtn('toggleLegend', state.showLegend);
+  syncToggleBtn('toggleDual',   state.dualAxis);
+  applyBgColor(state.bgColor);
+  buildSliders();
+  buildLegendPos();
+  buildAspect();
+}
+
+const isHex6 = v => /^#[0-9a-fA-F]{6}$/.test(String(v));
 
 function applyImport() {
   let data;
@@ -770,20 +936,40 @@ function applyImport() {
     const values = s.values.map(v => (v === null || v === '' ? null : Number(v)));
     const series = mkSeries(
       s.name != null ? String(s.name) : 'Series ' + (i + 1),
-      PALETTE[i % PALETTE.length],
-      i === 0 ? 'bar' : 'line',
-      'left',
+      isHex6(s.color) ? s.color : PALETTE[i % PALETTE.length],
+      s.kind === 'line' || s.kind === 'bar' ? s.kind : (i === 0 ? 'bar' : 'line'),
+      s.axis === 'right' ? 'right' : 'left',
       values,
+      s.showLabels === true,
+      s.prefix != null ? String(s.prefix) : '',
+      s.suffix != null ? String(s.suffix) : '',
     );
     alignValues(series);
     return series;
   });
 
+  // Optional visual configuration — applied only when present and valid.
+  const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+  if (data.title != null)                  state.title      = String(data.title);
+  if (typeof data.showTitle  === 'boolean') state.showTitle  = data.showTitle;
+  if (typeof data.dualAxis   === 'boolean') state.dualAxis   = data.dualAxis;
+  if (typeof data.showGrid   === 'boolean') state.showGrid   = data.showGrid;
+  if (typeof data.showLegend === 'boolean') state.showLegend = data.showLegend;
+  if (['top', 'bottom', 'left', 'right'].includes(data.legendPos)) state.legendPos = data.legendPos;
+  if (ASPECTS[data.aspect]) state.aspect = data.aspect;
+  if (isHex6(data.bgColor)) state.bgColor = data.bgColor;
+  if (Number.isFinite(data.barWidth))       state.barWidth       = clamp(data.barWidth, 0.3, 0.95);
+  if (Number.isFinite(data.lineWidth))      state.lineWidth      = clamp(data.lineWidth, 1, 8);
+  if (Number.isFinite(data.axisFontSize))   state.axisFontSize   = clamp(data.axisFontSize, 8, 28);
+  if (Number.isFinite(data.valueFontSize))  state.valueFontSize  = clamp(data.valueFontSize, 8, 24);
+  if (Number.isFinite(data.legendFontSize)) state.legendFontSize = clamp(data.legendFontSize, 8, 24);
+
   showImportMsg('Imported ' + state.series.length + ' series × ' + cats.length + ' categories.', true);
   renderCategories();
   renderSeries();
   renderMatrix();
-  renderPreview();
+  syncControls();
+  setAspect(state.aspect);   // resize canvas to imported ratio, then repaint
 }
 
 document.getElementById('toggleImport').addEventListener('click', () => {
@@ -799,19 +985,11 @@ document.getElementById('cancelImport').addEventListener('click', () => {
 // ── Init ──────────────────────────────────────────────────────────────────────
 restore();
 
-document.getElementById('comboTitle').value = state.title;
-syncToggleBtn('toggleTitle',  state.showTitle);
-syncToggleBtn('toggleGrid',   state.showGrid);
-syncToggleBtn('toggleLegend', state.showLegend);
-syncToggleBtn('toggleDual',   state.dualAxis);
-
-applyBgColor(state.bgColor);
-
 renderCategories();
 renderSeries();
 renderMatrix();
-buildSliders();
-renderPreview();
+syncControls();
+setAspect(state.aspect);   // size the canvas to the restored ratio and paint
 </script>
 </body>
 </html>
