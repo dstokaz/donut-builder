@@ -147,6 +147,7 @@ const state = {
   aspect: '16:9',       // '16:9' | '3:2' | '4:3' | '1:1'
   bgColor: '#111111',
   barWidth: 0.7,        // fraction of a category slot used by the bar group
+  barGap: 0.12,         // gap between adjacent bars in a group, as a fraction of one bar's width
   lineWidth: 3,         // px
   axisFontSize: 14,     // px
   valueFontSize: 11,    // px
@@ -403,20 +404,29 @@ function render(c, w, h, withBg) {
 
   const scaleFor = s => (effAxis(s) === 'right' && state.dualAxis) ? rightMax : leftMax;
 
-  // Bars (grouped side-by-side within each slot)
+  // Bars (grouped side-by-side within each slot). Each bar keeps a constant
+  // width, but only the bars that actually have a value are drawn and they're
+  // centered under the category tick — so a category missing one of its values
+  // still lines its remaining bar(s) up with the label instead of leaving it
+  // stuck in an empty lane. `barGap` sets the spacing between adjacent bars.
   const barSeries = state.series.filter(s => s.kind === 'bar');
   const groupW = slotW * state.barWidth;
   const barW = barSeries.length ? groupW / barSeries.length : 0;
+  const gap = barW * state.barGap;
   cats.forEach((cat, ci) => {
     const center = plotLeft + slotW * (ci + 0.5);
-    const groupLeft = center - groupW / 2;
-    barSeries.forEach((s, bi) => {
+    const present = barSeries.filter(s => {
       const v = Number(s.values[ci]);
-      if (!isFinite(v) || v <= 0) return;
+      return isFinite(v) && v > 0;
+    });
+    if (!present.length) return;
+    const subLeft = center - (present.length * barW) / 2;
+    present.forEach((s, k) => {
+      const v = Number(s.values[ci]);
       const axisMax = scaleFor(s) || 1;
       const bh = Math.min(v / axisMax, 1) * plotH;
-      const bx = groupLeft + bi * barW + 1;
-      const bw = Math.max(barW - 2, 1);
+      const bx = subLeft + k * barW + gap / 2;
+      const bw = Math.max(barW - gap, 1);
       const by = plotBottom - bh;
       c.fillStyle = s.color;
       c.fillRect(bx, by, bw, bh);
@@ -493,6 +503,7 @@ function getConfig() {
     aspect: state.aspect,
     bgColor: state.bgColor,
     barWidth: state.barWidth,
+    barGap: state.barGap,
     lineWidth: state.lineWidth,
     axisFontSize: state.axisFontSize,
     valueFontSize: state.valueFontSize,
@@ -529,6 +540,7 @@ function restore() {
   state.aspect     = ASPECTS[data.aspect] ? data.aspect : '16:9';
   state.bgColor    = data.bgColor    ?? state.bgColor;
   state.barWidth   = data.barWidth   ?? state.barWidth;
+  state.barGap     = data.barGap     ?? state.barGap;
   state.lineWidth  = data.lineWidth  ?? state.lineWidth;
   state.axisFontSize   = data.axisFontSize   ?? state.axisFontSize;
   state.valueFontSize  = data.valueFontSize  ?? state.valueFontSize;
@@ -822,6 +834,11 @@ function buildSliders() {
       fmt: v => Math.round(v * 100) + '%',
       onInput: v => { state.barWidth = v; renderPreview(); },
     }),
+    sliderRow('Bar gap', {
+      min: 0, max: 0.6, step: 0.02, value: state.barGap,
+      fmt: v => Math.round(v * 100) + '%',
+      onInput: v => { state.barGap = v; renderPreview(); },
+    }),
     sliderRow('Line width', {
       min: 1, max: 8, step: 0.5, value: state.lineWidth,
       fmt: v => v, onInput: v => { state.lineWidth = v; renderPreview(); },
@@ -959,6 +976,7 @@ function applyImport() {
   if (ASPECTS[data.aspect]) state.aspect = data.aspect;
   if (isHex6(data.bgColor)) state.bgColor = data.bgColor;
   if (Number.isFinite(data.barWidth))       state.barWidth       = clamp(data.barWidth, 0.3, 0.95);
+  if (Number.isFinite(data.barGap))         state.barGap         = clamp(data.barGap, 0, 0.6);
   if (Number.isFinite(data.lineWidth))      state.lineWidth      = clamp(data.lineWidth, 1, 8);
   if (Number.isFinite(data.axisFontSize))   state.axisFontSize   = clamp(data.axisFontSize, 8, 28);
   if (Number.isFinite(data.valueFontSize))  state.valueFontSize  = clamp(data.valueFontSize, 8, 24);
