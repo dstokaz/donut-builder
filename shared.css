@@ -432,6 +432,35 @@ input[type="range"]::-moz-range-thumb {
 .seg-toggle button:hover:not(.active) { color: #aaa; }
 .seg-toggle.disabled { opacity: 0.4; pointer-events: none; }
 
+/* Bar color popover: floats inside #preview next to the clicked bar */
+.bar-popover {
+  position: absolute;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #161616;
+  border: 1px solid #2a2a2a;
+  border-radius: 10px;
+  padding: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.bar-popover-title {
+  color: #aaa;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bar-popover-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.bar-popover-row .btn-export { padding: 6px 12px; font-size: 12px; }
+
 /* Value matrix: series rows × category columns */
 .matrix-wrap { overflow-x: auto; }
 table.value-matrix {

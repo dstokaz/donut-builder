@@ -131,9 +131,13 @@
 // ── State ──────────────────────────────────────────────────────────────────
 let nextId = 1;
 
-function mkSeries(name, color, kind, axis, values, showLabels = false, prefix = '', suffix = '') {
-  return { id: nextId++, name, color, kind, axis, showLabels, prefix, suffix, values: values.slice() };
+function mkSeries(name, color, kind, axis, values, showLabels = false, prefix = '', suffix = '', overrides = []) {
+  return { id: nextId++, name, color, kind, axis, showLabels, prefix, suffix,
+           values: values.slice(), overrides: overrides.slice() };
 }
+
+// Effective color of one bar: per-bar override if set, else the series color.
+function barColor(s, ci) { return (s.overrides && s.overrides[ci]) || s.color; }
 
 const state = {
   title: 'Revenue & Growth',
@@ -251,6 +255,11 @@ const TICKS = 5;
 
 const canvas = document.getElementById('canvas');
 let ctx      = setupCanvas(canvas, CANVAS_W, CANVAS_H);
+
+// Bar rectangles from the last render (render coordinates), for click hit-testing,
+// and the bar currently being recolored via the popover (null = none).
+let barHits = [];
+let selectedBar = null;   // { seriesId, ci }
 
 // Switch aspect ratio: resize the canvas backing store and repaint.
 function setAspect(a) {
@@ -413,6 +422,7 @@ function render(c, w, h, withBg) {
   const groupW = slotW * state.barWidth;
   const barW = barSeries.length ? groupW / barSeries.length : 0;
   const gap = barW * state.barGap;
+  barHits = [];
   cats.forEach((cat, ci) => {
     const center = plotLeft + slotW * (ci + 0.5);
     const present = barSeries.filter(s => {
@@ -428,11 +438,21 @@ function render(c, w, h, withBg) {
       const bx = subLeft + k * barW + gap / 2;
       const bw = Math.max(barW - gap, 1);
       const by = plotBottom - bh;
-      c.fillStyle = s.color;
+      const color = barColor(s, ci);
+      c.fillStyle = color;
       c.fillRect(bx, by, bw, bh);
+      barHits.push({ x: bx, y: by, w: bw, h: bh, seriesId: s.id, ci });
+
+      // Selection outline while the color popover is open — preview only,
+      // never in exported PNGs (those render into an offscreen context).
+      if (c === ctx && selectedBar && selectedBar.seriesId === s.id && selectedBar.ci === ci) {
+        c.strokeStyle = '#ffffff';
+        c.lineWidth = 2;
+        c.strokeRect(bx - 1.5, by - 1.5, bw + 3, bh + 3);
+      }
 
       if (s.showLabels)
-        drawValueLabel(c, (s.prefix || '') + fmtNum(v) + (s.suffix || ''), bx + bw / 2, by - 3, s.color);
+        drawValueLabel(c, (s.prefix || '') + fmtNum(v) + (s.suffix || ''), bx + bw / 2, by - 3, color);
     });
   });
 
@@ -494,8 +514,9 @@ function getConfig() {
     title: state.title,
     showTitle: state.showTitle,
     categories: state.categories.slice(),
-    series: state.series.map(({ name, color, kind, axis, showLabels, prefix, suffix, values }) =>
-      ({ name, color, kind, axis, showLabels, prefix, suffix, values: values.slice() })),
+    series: state.series.map(({ name, color, kind, axis, showLabels, prefix, suffix, values, overrides }) =>
+      ({ name, color, kind, axis, showLabels, prefix, suffix, values: values.slice(),
+         overrides: (overrides || []).map(v => v || null) })),
     dualAxis: state.dualAxis,
     showGrid: state.showGrid,
     showLegend: state.showLegend,
@@ -532,6 +553,7 @@ function restore() {
     prefix: s.prefix ?? '',
     suffix: s.suffix ?? '',
     values: Array.isArray(s.values) ? s.values : [],
+    overrides: Array.isArray(s.overrides) ? s.overrides.map(v => isHex6(v) ? v : null) : [],
   }));
   state.dualAxis   = data.dualAxis   ?? true;
   state.showGrid   = data.showGrid   ?? true;
@@ -552,11 +574,14 @@ function restore() {
   return true;
 }
 
-// Pad/trim a series' values to match the number of categories.
+// Pad/trim a series' values and per-bar overrides to match the number of categories.
 function alignValues(s) {
   const n = state.categories.length;
   while (s.values.length < n) s.values.push(null);
   s.values.length = n;
+  s.overrides ??= [];
+  while (s.overrides.length < n) s.overrides.push(null);
+  s.overrides.length = n;
 }
 
 // ── UI: Categories ────────────────────────────────────────────────────────────
@@ -585,7 +610,7 @@ function renderCategories() {
     del.addEventListener('click', () => {
       if (state.categories.length <= 1) return;
       state.categories.splice(idx, 1);
-      state.series.forEach(s => s.values.splice(idx, 1));
+      state.series.forEach(s => { s.values.splice(idx, 1); s.overrides.splice(idx, 1); });
       renderCategories();
       renderMatrix();
       renderPreview();
@@ -598,7 +623,7 @@ function renderCategories() {
 
 document.getElementById('add-cat').addEventListener('click', () => {
   state.categories.push('Cat ' + (state.categories.length + 1));
-  state.series.forEach(s => s.values.push(null));
+  state.series.forEach(s => { s.values.push(null); s.overrides.push(null); });
   renderCategories();
   renderMatrix();
   renderPreview();
@@ -876,6 +901,96 @@ bgHex.addEventListener('input', e => {
   if (/^#[0-9a-fA-F]{6}$/.test(e.target.value.trim())) applyBgColor(e.target.value.trim());
 });
 
+// ── Bar color popover ─────────────────────────────────────────────────────────
+// Click a bar on the chart to recolor just that bar (one series at one
+// category). A small popover with a color swatch and a Reset button opens next
+// to it; Escape or clicking anywhere else dismisses it.
+const preview = document.getElementById('preview');
+const barPopover = document.createElement('div');
+barPopover.className = 'bar-popover';
+barPopover.hidden = true;
+preview.appendChild(barPopover);
+
+function closeBarPopover() {
+  if (barPopover.hidden) return;
+  barPopover.hidden = true;
+  selectedBar = null;
+  render(ctx, CANVAS_W, CANVAS_H, true);   // repaint without the selection outline
+}
+
+function openBarPopover(hit, clientX, clientY) {
+  const s = state.series.find(sr => sr.id === hit.seriesId);
+  if (!s) return;
+  selectedBar = { seriesId: hit.seriesId, ci: hit.ci };
+
+  barPopover.innerHTML = '';
+  const title = document.createElement('div');
+  title.className = 'bar-popover-title';
+  title.textContent = (s.name || 'Series') + ' · ' + (state.categories[hit.ci] || '—');
+
+  const row = document.createElement('div');
+  row.className = 'bar-popover-row';
+  const swatch = colorSwatch(barColor(s, hit.ci), hex => {
+    s.overrides[hit.ci] = hex;
+    renderPreview();
+  });
+  const reset = document.createElement('button');
+  reset.className = 'btn-export';
+  reset.textContent = 'Reset';
+  reset.title = 'Back to the series color';
+  reset.addEventListener('click', () => {
+    s.overrides[hit.ci] = null;
+    renderPreview();
+    closeBarPopover();
+  });
+  row.append(swatch, reset);
+  barPopover.append(title, row);
+  barPopover.hidden = false;
+
+  // Position next to the click, clamped inside the preview pane.
+  const pr = preview.getBoundingClientRect();
+  const px = Math.max(8, Math.min(clientX - pr.left + 12, preview.clientWidth  - barPopover.offsetWidth  - 8));
+  const py = Math.max(8, Math.min(clientY - pr.top  + 12, preview.clientHeight - barPopover.offsetHeight - 8));
+  barPopover.style.left = px + 'px';
+  barPopover.style.top  = py + 'px';
+
+  render(ctx, CANVAS_W, CANVAS_H, true);   // repaint with the selection outline
+}
+
+// Map a mouse event to render coordinates and find the bar under it, if any.
+// getBoundingClientRect reflects the visual zoom transform, so dividing by it
+// works at any zoom level (the scale is uniform).
+function barHitAt(e) {
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  const x = (e.clientX - rect.left) * (CANVAS_W / rect.width);
+  const y = (e.clientY - rect.top)  * (CANVAS_H / rect.height);
+  return barHits.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) || null;
+}
+
+canvas.addEventListener('click', e => {
+  const hit = barHitAt(e);
+  if (hit) openBarPopover(hit, e.clientX, e.clientY);
+  else closeBarPopover();
+});
+
+canvas.addEventListener('mousemove', e => {
+  // Pointer over bars; otherwise fall back to the zoom pan cursor ('grab' when
+  // zoomed in — shared.js only re-applies it on zoom changes, so restore it here).
+  const zoomed = /scale\(([\d.]+)\)/.exec(canvas.style.transform || '');
+  canvas.style.cursor = barHitAt(e) ? 'pointer' : (zoomed && parseFloat(zoomed[1]) > 1 ? 'grab' : '');
+});
+
+// Dismiss on any press outside the popover. Presses on the canvas are left to
+// the click handler above (hit → move popover, miss → close).
+document.addEventListener('pointerdown', e => {
+  if (barPopover.hidden || barPopover.contains(e.target) || e.target === canvas) return;
+  closeBarPopover();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeBarPopover();
+});
+
 // ── Export ────────────────────────────────────────────────────────────────────
 function exportChart(withBg) {
   exportPNG({
@@ -894,7 +1009,8 @@ function exportJSON() {
 // Accepts a minimal data shape:
 //   { "categories": ["Q1", ...], "series": [ { "name": "Revenue", "values": [..] } ] }
 // …or a full config as produced by Export JSON, where each series may also carry
-// "color"/"kind"/"axis"/"showLabels"/"prefix"/"suffix" and the top level may carry
+// "color"/"kind"/"axis"/"showLabels"/"prefix"/"suffix"/"overrides" (per-bar color
+// overrides aligned to categories) and the top level may carry
 // visual settings (title, dualAxis, showGrid, legend, aspect, bgColor, sizes…).
 // Anything omitted falls back to a sensible default — first series bars, rest lines.
 const importPanel = document.getElementById('import-panel');
@@ -960,6 +1076,7 @@ function applyImport() {
       s.showLabels === true,
       s.prefix != null ? String(s.prefix) : '',
       s.suffix != null ? String(s.suffix) : '',
+      Array.isArray(s.overrides) ? s.overrides.map(v => isHex6(v) ? v : null) : [],
     );
     alignValues(series);
     return series;
@@ -1002,6 +1119,7 @@ document.getElementById('cancelImport').addEventListener('click', () => {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 restore();
+state.series.forEach(alignValues);   // also sizes the default series' overrides
 
 renderCategories();
 renderSeries();
