@@ -91,6 +91,16 @@
         <span class="field-label">Value text</span>
         <button class="vis-toggle" id="toggleShowValue" title="Show/hide">●</button>
       </div>
+      <div class="toggle-row">
+        <span class="field-label">Multi-ring</span>
+        <button class="vis-toggle" id="toggleMultiRing" title="On/off">○</button>
+      </div>
+    </div>
+
+    <div class="section" id="breakoutSection" hidden>
+      <div class="panel-title">Breakout (pie-of-pie)</div>
+      <div id="breakout-list"></div>
+      <button id="add-breakout-item" class="btn-add">+ Add part</button>
     </div>
 
     <div class="section">
@@ -164,10 +174,12 @@ const state = {
   showPct:   true,
   showLabel: true,
   showValue: true,
+  multiRing: false,   // concentric rings: items carry a ring index when on
 };
 
 function mkItem(label, value, pct, color) {
-  return { id: nextId++, label, value, pct, color, labelOffset: { x: 0, y: 0 } };
+  return { id: nextId++, label, value, pct, color, labelOffset: { x: 0, y: 0 },
+           explode: 0, ring: 0, detail: null };
 }
 
 state.items = [
@@ -182,8 +194,7 @@ function hasNumericValue(item) {
   return parseValue(item.value) !== null;
 }
 
-function computeSegments() {
-  const items = state.items;
+function computeSegments(items = state.items) {
   if (!items.length) return [];
 
   const manualItems = items.filter(it => !hasNumericValue(it));
@@ -200,6 +211,16 @@ function computeSegments() {
   });
 }
 
+// Segments across every ring: with multi-ring on, percentages are computed
+// within each ring's group; otherwise it's the plain single-ring result.
+function computeAllSegments() {
+  if (!state.multiRing) return computeSegments(state.items);
+  const out = [];
+  for (const ringIdx of [0, 1, 2])
+    out.push(...computeSegments(state.items.filter(it => (it.ring || 0) === ringIdx)));
+  return out;
+}
+
 // ── Canvas Rendering ────────────────────────────────────────────────────────
 const CANVAS_W = 1040;
 const CANVAS_H = 720;
@@ -209,15 +230,17 @@ const ctx    = setupCanvas(canvas, CANVAS_W, CANVAS_H);
 
 let labelHitAreas  = []; // [{item, left, right, top, bottom}] — updated each preview render
 let centerHitAreas = []; // [{id, left, right, top, bottom}] — center text click targets
+let arcHits        = []; // [{id, sRad, mRad, span, rIn, rOut}] — slice click targets
+let donutGeom      = null; // { cx, cy, s } from the last preview render
 
 function render(c, w, h, withBg) {
   const s  = Math.min(w, h);          // reference size for all proportions
-  const cx = w / 2, cy = h / 2;
-  const outerR  = s * 0.27;
-  const ringW   = s * state.ringThickness / 100;
-  const innerR  = outerR - ringW;
-  const midR    = (outerR + innerR) / 2;
-  const GAP_RAD = (1.8 * Math.PI) / 180;
+  const hasBreakout = state.items.some(it => it.detail && it.detail.items && it.detail.items.length);
+  const cx = hasBreakout ? w * 0.36 : w / 2;   // main donut moves left for pie-of-pie
+  const cy = h / 2;
+  const outerR    = s * 0.27;
+  const userRingW = s * state.ringThickness / 100;
+  const GAP_RAD   = (1.8 * Math.PI) / 180;
 
   c.clearRect(0, 0, w, h);
 
@@ -226,153 +249,272 @@ function render(c, w, h, withBg) {
     c.fillRect(0, 0, w, h);
   }
 
-  const segs = computeSegments();
-  if (!segs.length) return;
+  if (!state.items.length) return;
 
-  const totalPct = segs.reduce((sum, it) => sum + it.computedPct, 0);
-  if (totalPct <= 0) return;
-  const scale = (2 * Math.PI) / totalPct;
-
-  // Build arc data
-  const arcs = [];
-  let startAngle = -Math.PI / 2 + (state.rotation * Math.PI / 180);
-  for (const seg of segs) {
-    const span  = seg.computedPct * scale;
-    const sRad  = startAngle + GAP_RAD / 2;
-    const eRad  = startAngle + span - GAP_RAD / 2;
-    const mRad  = startAngle + span / 2;
-    arcs.push({ seg, sRad, eRad, mRad, span });
-    startAngle += span;
-  }
-
-  // Outer guide ring — one arc per segment, colored + gapped like the donut
-  const guideR  = outerR + ringW * 0.3;
-  const tickH   = ringW * 0.10;  // half-length of the | end cap
-  const guideW  = s * 0.002;
-  for (const { seg, sRad, eRad } of arcs) {
-    c.strokeStyle = seg.color + '66';
-    c.lineWidth   = guideW;
-    c.lineCap     = 'butt';
-
-    // Arc
-    c.beginPath();
-    c.arc(cx, cy, guideR, sRad, eRad);
-    c.stroke();
-
-    // | cap at start
-    c.beginPath();
-    c.moveTo(cx + (guideR - tickH) * Math.cos(sRad), cy + (guideR - tickH) * Math.sin(sRad));
-    c.lineTo(cx + (guideR + tickH) * Math.cos(sRad), cy + (guideR + tickH) * Math.sin(sRad));
-    c.stroke();
-
-    // | cap at end
-    c.beginPath();
-    c.moveTo(cx + (guideR - tickH) * Math.cos(eRad), cy + (guideR - tickH) * Math.sin(eRad));
-    c.lineTo(cx + (guideR + tickH) * Math.cos(eRad), cy + (guideR + tickH) * Math.sin(eRad));
-    c.stroke();
-  }
-
-  // Donut segments
-  for (const { seg, sRad, eRad } of arcs) {
-    c.beginPath();
-    c.arc(cx, cy, midR, sRad, eRad);
-    c.strokeStyle = seg.color;
-    c.lineWidth = ringW;
-    c.lineCap = 'butt';
-    c.stroke();
-  }
-
-  // Labels + leader lines
-  const leaderR   = outerR + ringW * 0.15;
-  const lineEndR  = outerR + ringW * 1.25;
-  const horizExt  = s * 0.038;
-  const lineColor = '#555555';
+  // Ring layout: everything on ring 0 unless multi-ring is on; concentric
+  // bands are fitted into the radial space, keeping room for the center text.
+  const ringOf = it => state.multiRing ? Math.min(Math.max(it.ring || 0, 0), 2) : 0;
+  const nRings = Math.max(...state.items.map(ringOf)) + 1;
+  const avail  = outerR - s * 0.08;
+  const fitW   = avail / (nRings + (nRings - 1) * 0.35);
+  const ringW  = nRings > 1 ? Math.min(userRingW, fitW) : userRingW;
+  const ringGap = ringW * 0.35;
+  const startBase = -Math.PI / 2 + (state.rotation * Math.PI / 180);
 
   const pctFontSz  = s * state.pctFontSize  / 100;
   const nameFontSz = s * state.nameFontSize / 100;
   const valFontSz  = s * state.valFontSize  / 100;
 
-  if (c === ctx) labelHitAreas = [];
+  if (c === ctx) { arcHits = []; donutGeom = { cx, cy, s }; }
 
-  for (const { seg, mRad } of arcs) {
-    const cosA    = Math.cos(mRad);
-    const sinA    = Math.sin(mRad);
-    const isRight = cosA >= 0;
+  // Explode offset: shift a slice radially outward along its mid-angle.
+  const explodeOff = (segId, mRad) => {
+    const item = state.items.find(it => it.id === segId);
+    const d = (item && item.explode ? item.explode : 0) * s * 0.06;
+    return { ox: Math.cos(mRad) * d, oy: Math.sin(mRad) * d };
+  };
 
-    // Line start (donut edge) and natural radial endpoint
-    const lx1      = cx + leaderR  * cosA;
-    const ly1      = cy + leaderR  * sinA;
-    const lx2      = cx + lineEndR * cosA;
-    const ly2      = cy + lineEndR * sinA;
-    const tickEndX = lx2 + (isRight ? horizExt : -horizExt);
+  let outer0 = null;    // ring-0 arcs + outer radius, for the labels below
+  let parentArc = null; // the broken-out slice's arc, for pie-of-pie connectors
 
-    // Per-label offset from drag
-    const origItem = state.items.find(it => it.id === seg.id);
-    const ox = origItem ? origItem.labelOffset.x : 0;
-    const oy = origItem ? origItem.labelOffset.y : 0;
-    const connX = tickEndX + ox;
-    const connY = ly2      + oy;
+  for (let k = 0; k < nRings; k++) {
+    const group = state.items.filter(it => ringOf(it) === k);
+    if (!group.length) continue;
+    const segs = computeSegments(group);
+    const totalPct = segs.reduce((sum, it) => sum + it.computedPct, 0);
+    if (totalPct <= 0) continue;
+    const scale = (2 * Math.PI) / totalPct;
 
-    // Leader line: use radial+tick when at rest, straight line when moved
-    c.beginPath();
-    c.moveTo(lx1, ly1);
-    if (ox === 0 && oy === 0) {
-      c.lineTo(lx2, ly2);
+    const rOut = outerR - k * (ringW + ringGap);
+    const rIn  = rOut - ringW;
+    const rMid = (rOut + rIn) / 2;
+
+    // Build arc data for this ring
+    const arcs = [];
+    let startAngle = startBase;
+    for (const seg of segs) {
+      const span  = seg.computedPct * scale;
+      const sRad  = startAngle + GAP_RAD / 2;
+      const eRad  = startAngle + span - GAP_RAD / 2;
+      const mRad  = startAngle + span / 2;
+      arcs.push({ seg, sRad, eRad, mRad, span });
+      startAngle += span;
     }
-    c.lineTo(connX, connY);
-    c.strokeStyle = lineColor;
+
+    // Outer guide ring — ring 0 only: one arc per segment, colored + gapped
+    if (k === 0) {
+      const guideR  = rOut + ringW * 0.3;
+      const tickH   = ringW * 0.10;  // half-length of the | end cap
+      const guideW  = s * 0.002;
+      for (const { seg, sRad, eRad, mRad } of arcs) {
+        const { ox, oy } = explodeOff(seg.id, mRad);
+        c.strokeStyle = seg.color + '66';
+        c.lineWidth   = guideW;
+        c.lineCap     = 'butt';
+
+        // Arc
+        c.beginPath();
+        c.arc(cx + ox, cy + oy, guideR, sRad, eRad);
+        c.stroke();
+
+        // | caps at both ends
+        for (const a of [sRad, eRad]) {
+          c.beginPath();
+          c.moveTo(cx + ox + (guideR - tickH) * Math.cos(a), cy + oy + (guideR - tickH) * Math.sin(a));
+          c.lineTo(cx + ox + (guideR + tickH) * Math.cos(a), cy + oy + (guideR + tickH) * Math.sin(a));
+          c.stroke();
+        }
+      }
+    }
+
+    // Ring segments
+    for (const { seg, sRad, eRad, mRad } of arcs) {
+      const { ox, oy } = explodeOff(seg.id, mRad);
+      c.beginPath();
+      c.arc(cx + ox, cy + oy, rMid, sRad, eRad);
+      c.strokeStyle = seg.color;
+      c.lineWidth = ringW;
+      c.lineCap = 'butt';
+      c.stroke();
+
+      if (c === ctx) arcHits.push({ id: seg.id, sRad, mRad, span: eRad - sRad, rIn, rOut });
+      const item = state.items.find(it => it.id === seg.id);
+      if (item && item.detail && item.detail.items && item.detail.items.length)
+        parentArc = { item, sRad, eRad, mRad, rOut };
+    }
+
+    if (k === 0) {
+      outer0 = { arcs, rOut };
+    } else if (state.showPct) {
+      // Inner rings label with % inside the arc — leader lines would cross
+      // the outer ring.
+      const f = Math.min(pctFontSz * 0.75, ringW * 0.8);
+      c.font = `700 ${f}px ${FF}`;
+      c.fillStyle = '#ffffff';
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      for (const { seg, mRad, span } of arcs) {
+        if (span < 0.22) continue;   // too narrow to hold a label
+        const { ox, oy } = explodeOff(seg.id, mRad);
+        c.fillText(Math.round(seg.computedPct) + '%',
+                   cx + ox + Math.cos(mRad) * rMid, cy + oy + Math.sin(mRad) * rMid);
+      }
+    }
+  }
+
+  // Ring-0 labels + leader lines (draggable). Inner rings label in-arc above.
+  if (c === ctx) labelHitAreas = [];
+  if (outer0) {
+    const leaderR   = outer0.rOut + ringW * 0.15;
+    const lineEndR  = outer0.rOut + ringW * 1.25;
+    const horizExt  = s * 0.038;
+    const lineColor = '#555555';
+
+    for (const { seg, mRad } of outer0.arcs) {
+      const cosA    = Math.cos(mRad);
+      const sinA    = Math.sin(mRad);
+      const isRight = cosA >= 0;
+      const { ox: eOx, oy: eOy } = explodeOff(seg.id, mRad);
+
+      // Line start (donut edge) and natural radial endpoint
+      const lx1      = cx + eOx + leaderR  * cosA;
+      const ly1      = cy + eOy + leaderR  * sinA;
+      const lx2      = cx + eOx + lineEndR * cosA;
+      const ly2      = cy + eOy + lineEndR * sinA;
+      const tickEndX = lx2 + (isRight ? horizExt : -horizExt);
+
+      // Per-label offset from drag
+      const origItem = state.items.find(it => it.id === seg.id);
+      const ox = origItem ? origItem.labelOffset.x : 0;
+      const oy = origItem ? origItem.labelOffset.y : 0;
+      const connX = tickEndX + ox;
+      const connY = ly2      + oy;
+
+      // Leader line: use radial+tick when at rest, straight line when moved
+      c.beginPath();
+      c.moveTo(lx1, ly1);
+      if (ox === 0 && oy === 0) {
+        c.lineTo(lx2, ly2);
+      }
+      c.lineTo(connX, connY);
+      c.strokeStyle = lineColor;
+      c.lineWidth = s * 0.0018;
+      c.stroke();
+
+      // Dot
+      c.beginPath();
+      c.arc(connX, connY, s * 0.004, 0, Math.PI * 2);
+      c.fillStyle = lineColor;
+      c.fill();
+
+      const textX     = connX + (isRight ? s * 0.01 : -s * 0.01);
+      const textAlign = isRight ? 'left' : 'right';
+      const baseY     = connY;
+
+      // Record hit area for mouse interaction (preview canvas only)
+      if (c === ctx && origItem) {
+        const hTop    = baseY - pctFontSz * 1.1;
+        const hBottom = baseY + pctFontSz * 0.72 + nameFontSz * 1.5;
+        const hW      = 180;
+        labelHitAreas.push({
+          item:   origItem,
+          left:   isRight ? textX      : textX - hW,
+          right:  isRight ? textX + hW : textX,
+          top:    hTop,
+          bottom: hBottom,
+        });
+      }
+
+      // Percentage (large, colored)
+      if (state.showPct) {
+        c.font = `700 ${pctFontSz}px ${FF}`;
+        c.fillStyle = seg.color;
+        c.textAlign = textAlign;
+        c.textBaseline = 'alphabetic';
+        c.fillText(Math.round(seg.computedPct) + '%', textX, baseY - s * 0.005);
+      }
+
+      // Label name
+      if (state.showLabel) {
+        c.font = `600 ${nameFontSz}px ${FF}`;
+        c.fillStyle = '#e4e4e4';
+        c.textAlign = textAlign;
+        c.textBaseline = 'alphabetic';
+        c.fillText(seg.label || 'Unnamed', textX, baseY + pctFontSz * 0.72);
+      }
+
+      // Value (optional) — shown as-is, user controls the text including any ~ prefix
+      if (state.showValue && seg.value !== null && seg.value !== '') {
+        c.font = `400 ${valFontSz}px ${FF}`;
+        c.fillStyle = '#777';
+        c.textAlign = textAlign;
+        c.textBaseline = 'alphabetic';
+        c.fillText(String(seg.value), textX, baseY + pctFontSz * 0.72 + nameFontSz * 1.3);
+      }
+    }
+  }
+
+  // Pie-of-pie: a secondary donut breaking down one slice's composition, with
+  // connectors from the parent slice's edge angles to the secondary circle.
+  if (parentArc) {
+    const sx = w * 0.78, sy = cy;
+    const r2  = s * 0.16;
+    const rw2 = Math.max(s * 0.045, 8);
+    const rMid2 = r2 - rw2 / 2;
+    const { ox, oy } = explodeOff(parentArc.item.id, parentArc.mRad);
+
+    c.strokeStyle = '#555555';
     c.lineWidth = s * 0.0018;
+    c.beginPath();
+    c.moveTo(cx + ox + Math.cos(parentArc.sRad) * parentArc.rOut,
+             cy + oy + Math.sin(parentArc.sRad) * parentArc.rOut);
+    c.lineTo(sx, sy - r2);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(cx + ox + Math.cos(parentArc.eRad) * parentArc.rOut,
+             cy + oy + Math.sin(parentArc.eRad) * parentArc.rOut);
+    c.lineTo(sx, sy + r2);
     c.stroke();
 
-    // Dot
-    c.beginPath();
-    c.arc(connX, connY, s * 0.004, 0, Math.PI * 2);
-    c.fillStyle = lineColor;
-    c.fill();
-
-    const textX     = connX + (isRight ? s * 0.01 : -s * 0.01);
-    const textAlign = isRight ? 'left' : 'right';
-    const baseY     = connY;
-
-    // Record hit area for mouse interaction (preview canvas only)
-    if (c === ctx && origItem) {
-      const hTop    = baseY - pctFontSz * 1.1;
-      const hBottom = baseY + pctFontSz * 0.72 + nameFontSz * 1.5;
-      const hW      = 180;
-      labelHitAreas.push({
-        item:   origItem,
-        left:   isRight ? textX      : textX - hW,
-        right:  isRight ? textX + hW : textX,
-        top:    hTop,
-        bottom: hBottom,
+    const detail = parentArc.item.detail.items;
+    const total = detail.reduce((a, d) => a + (parseValue(d.value) || 0), 0);
+    if (total > 0) {
+      let ang = -Math.PI / 2;
+      const rows = [];
+      detail.forEach(d => {
+        const frac = (parseValue(d.value) || 0) / total;
+        const span = frac * 2 * Math.PI;
+        const sR = ang + GAP_RAD / 2;
+        const eR = ang + span - GAP_RAD / 2;
+        if (eR > sR) {
+          c.beginPath();
+          c.arc(sx, sy, rMid2, sR, eR);
+          c.strokeStyle = d.color;
+          c.lineWidth = rw2;
+          c.lineCap = 'butt';
+          c.stroke();
+        }
+        rows.push({ d, frac });
+        ang += span;
       });
-    }
 
-    // Percentage (large, colored)
-    if (state.showPct) {
-      c.font = `700 ${pctFontSz}px ${FF}`;
-      c.fillStyle = seg.color;
-      c.textAlign = textAlign;
-      c.textBaseline = 'alphabetic';
-      c.fillText(Math.round(seg.computedPct) + '%', textX, baseY - s * 0.005);
-    }
-
-    // Label name
-    if (state.showLabel) {
-      c.font = `600 ${nameFontSz}px ${FF}`;
-      c.fillStyle = '#e4e4e4';
-      c.textAlign = textAlign;
-      c.textBaseline = 'alphabetic';
-      c.fillText(seg.label || 'Unnamed', textX, baseY + pctFontSz * 0.72);
-    }
-
-    // Value (optional) — shown as-is, user controls the text including any ~ prefix
-    if (state.showValue && seg.value !== null && seg.value !== '') {
-      c.font = `400 ${valFontSz}px ${FF}`;
-      c.fillStyle = '#777';
-      c.textAlign = textAlign;
-      c.textBaseline = 'alphabetic';
-      c.fillText(String(seg.value), textX, baseY + pctFontSz * 0.72 + nameFontSz * 1.3);
+      // Mini legend to the right of the secondary donut.
+      const f = Math.max(nameFontSz * 0.9, s * 0.02);
+      const lh = f * 1.6;
+      let ly = sy - (rows.length - 1) * lh / 2;
+      rows.forEach(({ d, frac }) => {
+        const lx = sx + r2 + s * 0.03;
+        c.beginPath();
+        c.arc(lx, ly, s * 0.008, 0, 2 * Math.PI);
+        c.fillStyle = d.color;
+        c.fill();
+        c.font = `600 ${f}px ${FF}`;
+        c.fillStyle = '#dddddd';
+        c.textAlign = 'left';
+        c.textBaseline = 'middle';
+        c.fillText((d.label || '') + '  ' + Math.round(frac * 100) + '%', lx + s * 0.02, ly);
+        ly += lh;
+      });
     }
   }
 
@@ -430,8 +572,13 @@ const STORAGE_KEY = 'donut-builder-v1';
 // internal-only and omitted (import/restore reassign them).
 function getConfig() {
   return {
-    items: state.items.map(({ label, value, pct, color, labelOffset }) =>
-      ({ label, value, pct, color, labelOffset: { ...labelOffset } })),
+    items: state.items.map(({ label, value, pct, color, labelOffset, explode, ring, detail }) =>
+      ({ label, value, pct, color, labelOffset: { ...labelOffset },
+         explode: explode || 0, ring: ring || 0,
+         detail: detail && detail.items
+           ? { items: detail.items.map(({ label, value, color }) => ({ label, value, color })) }
+           : null })),
+    multiRing:     state.multiRing,
     centerTitle:   state.centerTitle,
     centerValue:   state.centerValue,
     centerSub:     state.centerSub,
@@ -454,12 +601,37 @@ function persist() {
   saveState(STORAGE_KEY, getConfig());
 }
 
+// Validate a raw pie-of-pie detail block; null when absent or empty.
+function sanitizeDetail(d) {
+  if (!d || !Array.isArray(d.items) || !d.items.length) return null;
+  return { items: d.items.map((p, i) => ({
+    label: p?.label != null ? String(p.label) : 'Part ' + (i + 1),
+    value: parseValue(p?.value) ?? 0,
+    color: isHex6(p?.color) ? p.color : PALETTE[(4 + i) % PALETTE.length],
+  })) };
+}
+
+// At most one item may carry a breakout — keep the first, drop the rest.
+function enforceSingleBreakout() {
+  let seen = false;
+  state.items.forEach(it => {
+    if (it.detail && !seen) seen = true;
+    else it.detail = null;
+  });
+}
+
 function restore() {
   const data = loadState(STORAGE_KEY);
   if (!data || !Array.isArray(data.items) || !data.items.length) return false;
 
   state.items         = data.items.map((it, idx) =>
-    ({ ...it, id: it.id ?? idx + 1, labelOffset: it.labelOffset || { x: 0, y: 0 } }));
+    ({ ...it, id: it.id ?? idx + 1,
+       labelOffset: it.labelOffset || { x: 0, y: 0 },
+       explode: Number.isFinite(it.explode) ? Math.min(Math.max(it.explode, 0), 1) : 0,
+       ring: [0, 1, 2].includes(it.ring) ? it.ring : 0,
+       detail: sanitizeDetail(it.detail) }));
+  enforceSingleBreakout();
+  state.multiRing     = data.multiRing ?? false;
   state.centerTitle   = data.centerTitle   ?? state.centerTitle;
   state.centerValue   = data.centerValue   ?? state.centerValue;
   state.centerSub     = data.centerSub     ?? state.centerSub;
@@ -485,7 +657,7 @@ function restore() {
 
 // Refresh all auto-pct displays and toggle readonly state — no DOM rebuild.
 function refreshPctFields() {
-  const segs = computeSegments();
+  const segs = computeAllSegments();
   state.items.forEach(item => {
     const pctIn = document.querySelector(`.pct-wrap input[data-item-id="${item.id}"]`);
     if (!pctIn) return;
@@ -506,7 +678,7 @@ function refreshPctFields() {
 function renderItems() {
   const list = document.getElementById('items-list');
   list.innerHTML = '';
-  const segs = computeSegments();
+  const segs = computeAllSegments();
 
   state.items.forEach((item, idx) => {
     const computed = segs.find(s => s.id === item.id);
@@ -577,7 +749,26 @@ function renderItems() {
 
     row.append(swatchWrap, labelIn, valIn, pctWrap, delBtn);
     list.appendChild(row);
+
+    // Ring picker (multi-ring mode): which concentric ring the item sits on.
+    if (state.multiRing) {
+      const ringRow = document.createElement('div');
+      ringRow.className = 'toggle-row';
+      const lbl = document.createElement('span');
+      lbl.className = 'field-label';
+      lbl.textContent = 'Ring';
+      const toggleWrap = document.createElement('div');
+      toggleWrap.style.width = '110px';
+      toggleWrap.appendChild(makeSegToggle(
+        [{ label: '1', value: 0 }, { label: '2', value: 1 }, { label: '3', value: 2 }],
+        item.ring || 0, false,
+        v => { item.ring = v; renderItems(); renderPreview(); }));
+      ringRow.append(lbl, toggleWrap);
+      list.appendChild(ringRow);
+    }
   });
+
+  renderBreakout();
 }
 
 // ── Add item ────────────────────────────────────────────────────────────────
@@ -597,7 +788,8 @@ document.getElementById('add-item-btn').addEventListener('click', () => {
 });
 
 // ── Text visibility toggles ───────────────────────────────────────────────────
-const bindToggle = (id, key) => bindStateToggle(id, state, key, renderPreview);
+const bindToggle = (id, key, after) =>
+  bindStateToggle(id, state, key, () => { if (after) after(); renderPreview(); });
 
 bindToggle('toggleCenterTitle', 'showCenterTitle');
 bindToggle('toggleCenterValue', 'showCenterValue');
@@ -605,6 +797,167 @@ bindToggle('toggleCenterSub',   'showCenterSub');
 bindToggle('toggleShowPct',     'showPct');
 bindToggle('toggleShowLabel',   'showLabel');
 bindToggle('toggleShowValue',   'showValue');
+bindToggle('toggleMultiRing',   'multiRing', renderItems);   // items gain ring pickers
+
+// ── Breakout (pie-of-pie) panel ───────────────────────────────────────────────
+function renderBreakout() {
+  const section = document.getElementById('breakoutSection');
+  const host = document.getElementById('breakout-list');
+  const parent = state.items.find(it => it.detail && it.detail.items);
+  section.hidden = !parent;
+  host.innerHTML = '';
+  if (!parent) return;
+
+  const note = document.createElement('div');
+  note.className = 'import-hint';
+  note.textContent = 'Composition of “' + (parent.label || 'segment') + '” — click the slice on the chart to remove.';
+  host.appendChild(note);
+
+  parent.detail.items.forEach((d, idx) => {
+    const row = document.createElement('div');
+    row.className = 'item-row';
+    row.style.gridTemplateColumns = '28px 1fr 72px 28px';
+
+    const swatch = colorSwatch(d.color, hex => { d.color = hex; renderPreview(); });
+
+    const labelIn = document.createElement('input');
+    labelIn.type = 'text';
+    labelIn.value = d.label;
+    labelIn.placeholder = 'Part';
+    labelIn.addEventListener('input', e => { d.label = e.target.value; renderPreview(); });
+
+    const valIn = document.createElement('input');
+    valIn.type = 'number';
+    valIn.value = d.value ?? '';
+    valIn.placeholder = 'Value';
+    valIn.addEventListener('input', e => {
+      d.value = e.target.value === '' ? 0 : parseFloat(e.target.value);
+      renderPreview();
+    });
+
+    const del = document.createElement('button');
+    del.className = 'btn-icon delete';
+    del.innerHTML = '×';
+    del.title = 'Remove part';
+    del.addEventListener('click', () => {
+      if (parent.detail.items.length <= 1) return;
+      parent.detail.items.splice(idx, 1);
+      renderBreakout();
+      renderPreview();
+    });
+
+    row.append(swatch, labelIn, valIn, del);
+    host.appendChild(row);
+  });
+}
+
+document.getElementById('add-breakout-item').addEventListener('click', () => {
+  const parent = state.items.find(it => it.detail && it.detail.items);
+  if (!parent) return;
+  parent.detail.items.push({
+    label: 'Part ' + (parent.detail.items.length + 1),
+    value: 1,
+    color: PALETTE[(4 + parent.detail.items.length) % PALETTE.length],
+  });
+  renderBreakout();
+  renderPreview();
+});
+
+// ── Slice popover (explode / recolor / breakout) ──────────────────────────────
+const preview = document.getElementById('preview');
+const slicePopover = document.createElement('div');
+slicePopover.className = 'bar-popover';
+slicePopover.hidden = true;
+preview.appendChild(slicePopover);
+
+function closeSlicePopover() { slicePopover.hidden = true; }
+
+function openSlicePopover(item, clientX, clientY) {
+  slicePopover.innerHTML = '';
+
+  const title = document.createElement('div');
+  title.className = 'bar-popover-title';
+  title.textContent = item.label || 'Segment';
+
+  const row = document.createElement('div');
+  row.className = 'bar-popover-row';
+  row.appendChild(colorSwatch(item.color, hex => {
+    item.color = hex;
+    renderItems();
+    renderPreview();
+  }));
+
+  const slider = sliderRow('Explode', {
+    min: 0, max: 1, step: 0.05, value: item.explode || 0,
+    fmt: v => Math.round(v * 100) + '%',
+    onInput: v => { item.explode = v; renderPreview(); },
+  });
+
+  const breakBtn = document.createElement('button');
+  breakBtn.className = 'btn-export';
+  const hasDetail = item.detail && item.detail.items && item.detail.items.length;
+  breakBtn.textContent = hasDetail ? 'Remove breakout' : 'Break out slice…';
+  breakBtn.addEventListener('click', () => {
+    if (item.detail) {
+      item.detail = null;
+    } else {
+      state.items.forEach(it => { if (it !== item) it.detail = null; });  // one breakout max
+      item.detail = { items: [
+        { label: 'Part A', value: 2, color: PALETTE[4] },
+        { label: 'Part B', value: 1, color: PALETTE[5] },
+      ] };
+    }
+    renderBreakout();
+    renderPreview();
+    closeSlicePopover();
+  });
+
+  slicePopover.append(title, row, slider, breakBtn);
+  slicePopover.hidden = false;
+
+  // Position next to the click, clamped inside the preview pane.
+  const pr = preview.getBoundingClientRect();
+  const px = Math.max(8, Math.min(clientX - pr.left + 12, preview.clientWidth  - slicePopover.offsetWidth  - 8));
+  const py = Math.max(8, Math.min(clientY - pr.top  + 12, preview.clientHeight - slicePopover.offsetHeight - 8));
+  slicePopover.style.left = px + 'px';
+  slicePopover.style.top  = py + 'px';
+}
+
+// Find the slice under render coordinates (x, y), honoring ring bands + explode.
+function arcHitAt(x, y) {
+  if (!donutGeom) return null;
+  const { cx, cy, s } = donutGeom;
+  for (const a of arcHits) {
+    const item = state.items.find(it => it.id === a.id);
+    if (!item) continue;
+    const d = (item.explode || 0) * s * 0.06;
+    const ax = cx + Math.cos(a.mRad) * d;
+    const ay = cy + Math.sin(a.mRad) * d;
+    const dx = x - ax, dy = y - ay;
+    const rr = Math.hypot(dx, dy);
+    if (rr < a.rIn - s * 0.01 || rr > a.rOut + s * 0.01) continue;
+    let rel = Math.atan2(dy, dx) - a.sRad;
+    rel = ((rel % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    if (rel <= a.span) return item;
+  }
+  return null;
+}
+
+canvas.addEventListener('click', e => {
+  const pos = canvasPos(e);
+  if (hitLabel(pos.x, pos.y) || hitCenter(pos.x, pos.y)) { closeSlicePopover(); return; }
+  const item = arcHitAt(pos.x, pos.y);
+  if (item) openSlicePopover(item, e.clientX, e.clientY);
+  else closeSlicePopover();
+});
+
+document.addEventListener('pointerdown', e => {
+  if (slicePopover.hidden || slicePopover.contains(e.target) || e.target === canvas) return;
+  closeSlicePopover();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeSlicePopover();
+});
 
 // ── Background ────────────────────────────────────────────────────────────────
 const applyBgColor = bindBgControl(state, renderPreview);
@@ -647,8 +1000,13 @@ function applyImportData(data) {
       color: isHex6(it.color) ? it.color : PALETTE[i % PALETTE.length],
       labelOffset: off && Number.isFinite(off.x) && Number.isFinite(off.y)
         ? { x: off.x, y: off.y } : { x: 0, y: 0 },
+      explode: Number.isFinite(it.explode) ? Math.min(Math.max(it.explode, 0), 1) : 0,
+      ring: [0, 1, 2].includes(it.ring) ? it.ring : 0,
+      detail: sanitizeDetail(it.detail),
     };
   });
+  enforceSingleBreakout();
+  if (typeof data.multiRing === 'boolean') state.multiRing = data.multiRing;
 
   // Optional visual configuration — applied only when present and valid.
   const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
@@ -762,7 +1120,8 @@ canvas.addEventListener('mousemove', e => {
       }
     }
   } else {
-    canvas.style.cursor = (hitLabel(pos.x, pos.y) || hitCenter(pos.x, pos.y)) ? 'grab' : 'default';
+    canvas.style.cursor = (hitLabel(pos.x, pos.y) || hitCenter(pos.x, pos.y)) ? 'grab'
+      : arcHitAt(pos.x, pos.y) ? 'pointer' : 'default';
   }
 });
 
@@ -779,7 +1138,8 @@ canvas.addEventListener('mouseup', e => {
   }
   dragState = null;
   const pos = canvasPos(e);
-  canvas.style.cursor = (hitLabel(pos.x, pos.y) || hitCenter(pos.x, pos.y)) ? 'grab' : 'default';
+  canvas.style.cursor = (hitLabel(pos.x, pos.y) || hitCenter(pos.x, pos.y)) ? 'grab'
+    : arcHitAt(pos.x, pos.y) ? 'pointer' : 'default';
 });
 
 canvas.addEventListener('mouseleave', () => {
@@ -812,6 +1172,7 @@ function syncControls() {
   syncToggleBtn('toggleShowPct',     state.showPct);
   syncToggleBtn('toggleShowLabel',   state.showLabel);
   syncToggleBtn('toggleShowValue',   state.showValue);
+  syncToggleBtn('toggleMultiRing',   state.multiRing);
 
   applyBgColor(state.bgColor);  // also sets picker + swatch
 }

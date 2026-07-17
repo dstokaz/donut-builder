@@ -1,5 +1,15 @@
 # Changelog
 
+## [2026-07-17] — Donut upgrades: slice explode, multi-ring, pie-of-pie
+
+### Added
+- **Click any slice** to open a popover with a recolor swatch, an **explode slider** (slides the slice outward along its mid-angle — guide ring and leader line follow), and a **Break out slice** button
+- **Multi-ring mode** — up to three concentric rings; each item picks its ring, percentages are computed within each ring, and bands auto-thin to fit. The outer ring keeps draggable leader-line labels; inner rings label with % inside the arc
+- **Pie-of-pie breakout** — one slice can break out into a secondary donut showing its composition, with connector lines from the slice edges and a mini legend; parts are edited in a new Breakout panel section
+- All new fields (explode, ring, detail, multiRing) persist and round-trip through JSON export/import; existing saved donuts restore pixel-identical with everything off
+
+---
+
 ## [2026-07-17] — Scatter / bubble chart builder
 
 ### Added
