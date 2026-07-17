@@ -55,6 +55,18 @@
         <button class="vis-toggle" id="toggleGrid" title="Show/hide">●</button>
       </div>
       <div class="toggle-row">
+        <span class="field-label">Axis break</span>
+        <button class="vis-toggle" id="toggleAxisBreak" title="On/off">○</button>
+      </div>
+      <div class="field-stack" id="axisBreakInputs" hidden>
+        <span class="field-label">Compress from / to</span>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+          <input type="number" id="breakFrom" placeholder="from">
+          <input type="number" id="breakTo" placeholder="to">
+        </div>
+        <div class="import-hint" id="breakHint"></div>
+      </div>
+      <div class="toggle-row">
         <span class="field-label">Value labels</span>
         <div class="labels-right">
           <input type="text" id="valuePrefix" class="label-affix" placeholder="pre" maxlength="4" title="Label prefix (e.g. $)">
@@ -153,6 +165,7 @@ const state = {
   axisFontSize: 14,     // px
   valueFontSize: 11,    // px
   annotations: [],      // CAGR/diff arrows + value lines, see sanitizeAnn()
+  axisBreak: { enabled: false, from: null, to: null },
 };
 
 state.bars = [
@@ -252,7 +265,10 @@ function render(c, w, h, withBg) {
   const plotH = plotBottom - plotTop;
   if (plotH <= 0) return;
 
-  const y = v => plotBottom - (v - scale.min) / (scale.max - scale.min) * plotH;
+  // Value→pixel mapper; the optional axis break compresses [from, to] so the
+  // rest of the axis regains resolution. Everything below maps through y().
+  const ym = makeYMapper(scale.min, scale.max, plotTop, plotBottom, state.axisBreak);
+  const y = ym.y;
 
   // Title
   if (state.showTitle && state.title) {
@@ -263,10 +279,11 @@ function render(c, w, h, withBg) {
     c.fillText(state.title, w / 2, 40);
   }
 
-  // Grid + Y axis tick labels
+  // Grid + Y axis tick labels (ticks inside the compressed band are skipped)
   c.font = `400 ${af}px ${FF}`;
   c.textBaseline = 'middle';
   scale.ticks.forEach(t => {
+    if (ym.active && t > state.axisBreak.from && t < state.axisBreak.to) return;
     const ty = y(t);
     if (state.showGrid && t !== 0) {
       c.strokeStyle = '#262626';
@@ -298,6 +315,7 @@ function render(c, w, h, withBg) {
 
   // Bars + connectors + value labels
   const barW = slotW * state.barWidth;
+  const brokenBars = [];   // bar rects spanning the break band, for the markers
   comps.forEach((cp, i) => {
     const center = plotLeft + slotW * (i + 0.5);
     const x = center - barW / 2;
@@ -305,6 +323,8 @@ function render(c, w, h, withBg) {
     const hPx = Math.max(Math.abs(y(cp.y0) - y(cp.y1)), 1);
     c.fillStyle = effColor(cp);
     c.fillRect(x, topPx, barW, hPx);
+    if (ym.active && topPx < ym.bandTop && topPx + hPx > ym.bandBottom)
+      brokenBars.push({ bx: x, bw: barW });
 
     // Dashed connector from this bar's running level to the next bar's edge.
     if (state.showConnectors && i < comps.length - 1) {
@@ -332,10 +352,37 @@ function render(c, w, h, withBg) {
     }
   });
 
+  // Axis-break markers: punch a thin gap through each bar spanning the band
+  // and draw slash marks there, plus a marker on the axis itself.
+  if (ym.active) {
+    const midY = (ym.bandTop + ym.bandBottom) / 2;
+    const halfGap = 3;
+    const slashes = (x0, x1) => {
+      c.strokeStyle = '#888888';
+      c.lineWidth = 1.5;
+      for (const yy of [midY - halfGap, midY + halfGap]) {
+        c.beginPath();
+        c.moveTo(x0, yy + 3);
+        c.lineTo(x1, yy - 3);
+        c.stroke();
+      }
+    };
+    const punch = (px, wdt) => {
+      if (withBg) { c.fillStyle = state.bgColor; c.fillRect(px, midY - halfGap, wdt, halfGap * 2); }
+      else c.clearRect(px, midY - halfGap, wdt, halfGap * 2);
+    };
+    brokenBars.forEach(({ bx, bw }) => {
+      punch(bx - 1, bw + 2);
+      slashes(bx - 3, bx + bw + 3);
+    });
+    punch(plotLeft - 8, 16);
+    slashes(plotLeft - 6, plotLeft + 6);
+  }
+
   // ── Annotations (CAGR/diff arrows + value lines) — drawn on top ────────────
   if (c === ctx) {
     annHits = [];
-    plotMetrics = { plotTop, plotBottom, plotH, min: scale.min, max: scale.max, step: scale.step };
+    plotMetrics = { plotTop, plotBottom, plotH, min: scale.min, max: scale.max, step: scale.step, ym };
   }
   const xForI = i => plotLeft + slotW * (i + 0.5);
 
@@ -458,6 +505,7 @@ function getConfig() {
     valuePrefix: state.valuePrefix,
     valueSuffix: state.valueSuffix,
     showGrid: state.showGrid,
+    axisBreak: { ...state.axisBreak },
     aspect: state.aspect,
     bgColor: state.bgColor,
     barWidth: state.barWidth,
@@ -504,6 +552,12 @@ function restore() {
   state.valuePrefix    = data.valuePrefix    ?? '';
   state.valueSuffix    = data.valueSuffix    ?? '';
   state.showGrid       = data.showGrid       ?? true;
+  // Migration: saves from before axis breaks lack the key — default disabled.
+  state.axisBreak = {
+    enabled: data.axisBreak?.enabled === true,
+    from: Number.isFinite(data.axisBreak?.from) ? data.axisBreak.from : null,
+    to:   Number.isFinite(data.axisBreak?.to)   ? data.axisBreak.to   : null,
+  };
   state.aspect         = ASPECTS[data.aspect] ? data.aspect : '16:9';
   state.bgColor        = isHex6(data.bgColor) ? data.bgColor : state.bgColor;
   state.barWidth       = data.barWidth       ?? state.barWidth;
@@ -787,8 +841,9 @@ window.addEventListener('mousemove', e => {
   if (ann.type === 'arrow') {
     ann.yOffset = Math.min(Math.max(annDrag.orig - dy, 8), 600);
   } else {
-    const span = plotMetrics.max - plotMetrics.min;
-    const raw = annDrag.orig - dy / plotMetrics.plotH * span;
+    // Map through the (possibly broken) axis: pixel of the original value,
+    // shifted by the drag, back to a value.
+    const raw = plotMetrics.ym.yInv(plotMetrics.ym.y(annDrag.orig) + dy);
     const step = plotMetrics.step / 10 || 1;
     ann.value = Math.round(Math.min(Math.max(raw, plotMetrics.min), plotMetrics.max) / step) * step;
     ann.value = Math.round(ann.value * 100) / 100;
@@ -838,6 +893,38 @@ document.getElementById('valuePrefix').addEventListener('input', e => {
 document.getElementById('valueSuffix').addEventListener('input', e => {
   state.valueSuffix = e.target.value;
   renderPreview();
+});
+
+// ── Axis break controls ───────────────────────────────────────────────────────
+function updateBreakHint() {
+  const el = document.getElementById('breakHint');
+  const b = state.axisBreak;
+  if (!b.enabled) { el.textContent = ''; return; }
+  const lo = plotMetrics ? plotMetrics.min : null;
+  const hi = plotMetrics ? plotMetrics.max : null;
+  const ok = Number.isFinite(b.from) && Number.isFinite(b.to) && b.from < b.to &&
+             (lo === null || (b.from > lo && b.to < hi));
+  el.textContent = ok ? '' :
+    'Need axis min < from < to < axis max' +
+    (lo !== null ? ' (' + fmtNum(lo) + ' … ' + fmtNum(hi) + ')' : '') + ' — break inactive.';
+}
+
+document.getElementById('toggleAxisBreak').addEventListener('click', () => {
+  state.axisBreak.enabled = !state.axisBreak.enabled;
+  syncToggleBtn('toggleAxisBreak', state.axisBreak.enabled);
+  document.getElementById('axisBreakInputs').hidden = !state.axisBreak.enabled;
+  renderPreview();
+  updateBreakHint();
+});
+document.getElementById('breakFrom').addEventListener('input', e => {
+  state.axisBreak.from = e.target.value === '' ? null : parseFloat(e.target.value);
+  renderPreview();
+  updateBreakHint();
+});
+document.getElementById('breakTo').addEventListener('input', e => {
+  state.axisBreak.to = e.target.value === '' ? null : parseFloat(e.target.value);
+  renderPreview();
+  updateBreakHint();
 });
 
 // Aspect-ratio selector — resizes the canvas to the chosen ratio.
@@ -908,6 +995,11 @@ function applyImportData(data) {
       if (isHex6(data.colors[k])) state.colors[k] = data.colors[k];
   for (const key of ['showConnectors', 'showValues', 'showGrid'])
     if (typeof data[key] === 'boolean') state[key] = data[key];
+  state.axisBreak = {
+    enabled: data.axisBreak?.enabled === true,
+    from: Number.isFinite(data.axisBreak?.from) ? data.axisBreak.from : null,
+    to:   Number.isFinite(data.axisBreak?.to)   ? data.axisBreak.to   : null,
+  };
   if (data.valuePrefix != null) state.valuePrefix = String(data.valuePrefix);
   if (data.valueSuffix != null) state.valueSuffix = String(data.valueSuffix);
   if (ASPECTS[data.aspect]) state.aspect = data.aspect;
@@ -937,6 +1029,11 @@ function syncControls() {
   syncToggleBtn('toggleConnectors', state.showConnectors);
   syncToggleBtn('toggleGrid',       state.showGrid);
   syncToggleBtn('toggleValues',     state.showValues);
+  syncToggleBtn('toggleAxisBreak',  state.axisBreak.enabled);
+  document.getElementById('axisBreakInputs').hidden = !state.axisBreak.enabled;
+  document.getElementById('breakFrom').value = state.axisBreak.from ?? '';
+  document.getElementById('breakTo').value = state.axisBreak.to ?? '';
+  updateBreakHint();
   applyBgColor(state.bgColor);
   buildRoleColors();
   buildSliders();

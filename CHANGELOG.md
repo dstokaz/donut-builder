@@ -1,5 +1,15 @@
 # Changelog
 
+## [2026-07-17] — Axis breaks (combo + waterfall)
+
+### Added
+- **Axis break** — compress a value band (e.g. the middle of one dominant bar) into a thin 18px strip so the remaining bars regain resolution; enable it in the Axis (combo, left axis) or Display (waterfall) section with from/to inputs and an inline validity hint
+- Slash markers with a punched gap on the axis and across every bar spanning the band (background-colored, or truly transparent in transparent PNG exports); ticks inside the band are skipped
+- Everything maps through the shared piecewise `makeYMapper` — bars, stacks, lines, value labels, stack totals, waterfall connectors, arrows, and value lines all stay consistent, and dragging a value line still lands on the correct value through the broken scale
+- Break settings persist and round-trip through JSON export/import; older saves load with the break disabled
+
+---
+
 ## [2026-07-17] — Donut upgrades: slice explode, multi-ring, pie-of-pie
 
 ### Added

@@ -335,6 +335,47 @@ function drawVLine(c, x, y1, y2, { color = '#555555', width = 1, dash = [4, 4] }
   c.setLineDash([]);
 }
 
+// Piecewise-linear value→pixel mapper implementing an axis break: the value
+// band [brk.from, brk.to] compresses to a fixed 18px strip so the rest of the
+// axis regains resolution. Returns { active, y(v), yInv(py) } (+ bandTop /
+// bandBottom pixels when active). With no valid break this is the plain
+// linear mapping, so every call site can go through it unconditionally.
+function makeYMapper(vMin, vMax, plotTop, plotBottom, brk) {
+  const plotH = plotBottom - plotTop;
+  const span = vMax - vMin || 1;
+  const active = !!(brk && brk.enabled &&
+    Number.isFinite(brk.from) && Number.isFinite(brk.to) &&
+    brk.from < brk.to && brk.from > vMin && brk.to < vMax);
+  if (!active) {
+    return {
+      active: false,
+      y: v => plotBottom - (v - vMin) / span * plotH,
+      yInv: py => vMin + (plotBottom - py) / plotH * span,
+    };
+  }
+  const BAND_PX = 18;
+  const lowSpan  = brk.from - vMin;
+  const highSpan = vMax - brk.to;
+  const pxPerVal = (plotH - BAND_PX) / (lowSpan + highSpan);
+  const yFrom = plotBottom - lowSpan * pxPerVal;   // pixel of brk.from
+  const yTo   = yFrom - BAND_PX;                   // pixel of brk.to
+  return {
+    active: true,
+    bandTop: yTo,
+    bandBottom: yFrom,
+    y: v => {
+      if (v <= brk.from) return plotBottom - (v - vMin) * pxPerVal;
+      if (v >= brk.to)   return yTo - (v - brk.to) * pxPerVal;
+      return yFrom - (v - brk.from) / (brk.to - brk.from) * BAND_PX;
+    },
+    yInv: py => {
+      if (py >= yFrom) return vMin + (plotBottom - py) / pxPerVal;
+      if (py <= yTo)   return brk.to + (yTo - py) / pxPerVal;
+      return brk.from + (yFrom - py) / BAND_PX * (brk.to - brk.from);
+    },
+  };
+}
+
 // Compound annual growth rate from v0 to v1 over `periods` periods.
 // Returns null when undefined (nonpositive endpoints or zero periods).
 function computeCAGR(v0, v1, periods) {

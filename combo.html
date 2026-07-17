@@ -45,6 +45,18 @@
         <span class="field-label">Dual axis (left + right)</span>
         <button class="vis-toggle" id="toggleDual" title="Single / dual axis">●</button>
       </div>
+      <div class="toggle-row">
+        <span class="field-label">Axis break (left)</span>
+        <button class="vis-toggle" id="toggleAxisBreak" title="On/off">○</button>
+      </div>
+      <div class="field-stack" id="axisBreakInputs" hidden>
+        <span class="field-label">Compress from / to</span>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+          <input type="number" id="breakFrom" placeholder="from">
+          <input type="number" id="breakTo" placeholder="to">
+        </div>
+        <div class="import-hint" id="breakHint"></div>
+      </div>
     </div>
 
     <div class="section">
@@ -166,6 +178,7 @@ const state = {
   showStackTotals: false,     // total label above each stack (stacked modes)
   segmentLabelMode: 'value',  // 'value' | 'percent' — per-segment labels in stacked modes
   annotations: [],      // CAGR/diff arrows + value lines, see sanitizeAnn()
+  axisBreak: { enabled: false, from: null, to: null },  // left axis only
   lineWidth: 3,         // px
   axisFontSize: 14,     // px
   valueFontSize: 11,    // px
@@ -303,6 +316,13 @@ function render(c, w, h, withBg) {
   const plotH = plotBottom - plotTop;
   if (plotH <= 0) return;
 
+  // Value→pixel mappers. The optional axis break compresses a left-axis band
+  // ([axisBreak.from, axisBreak.to]) to a thin strip; the right axis and the
+  // fixed 0–100% scale stay linear. Everything drawn below maps through these.
+  const yLeft  = makeYMapper(0, leftMax, plotTop, plotBottom, pct100 ? null : state.axisBreak);
+  const yRight = makeYMapper(0, rightMax, plotTop, plotBottom, null);
+  const mapFor = axis => axis === 'right' ? yRight : yLeft;
+
   // Title
   if (state.showTitle && state.title) {
     c.font = `600 22px ${FF}`;
@@ -347,12 +367,14 @@ function render(c, w, h, withBg) {
     }
   }
 
-  // Grid + Y axis ticks/labels
+  // Grid + Y axis ticks/labels. Grid rows follow the (possibly broken) left
+  // axis; ticks whose value falls inside the compressed band are skipped.
   c.font = `400 ${af}px ${FF}`;
   c.textBaseline = 'middle';
   for (let i = 0; i <= TICKS; i++) {
-    const frac = i / TICKS;
-    const y = plotBottom - frac * plotH;
+    const lv = leftMax * (i / TICKS);
+    if (yLeft.active && lv > state.axisBreak.from && lv < state.axisBreak.to) continue;
+    const y = yLeft.y(lv);
 
     if (state.showGrid) {
       c.strokeStyle = '#262626';
@@ -363,14 +385,14 @@ function render(c, w, h, withBg) {
     // Left axis label (percentages in 100% stacked mode)
     c.fillStyle = '#777';
     c.textAlign = 'right';
-    c.fillText(pct100 ? Math.round(leftMax * frac) + '%' : fmtNum(leftMax * frac),
-               plotLeft - 10, y);
-
-    // Right axis label
-    if (hasRight) {
+    c.fillText(pct100 ? Math.round(lv) + '%' : fmtNum(lv), plotLeft - 10, y);
+  }
+  if (hasRight) {
+    for (let i = 0; i <= TICKS; i++) {
+      const rv = rightMax * (i / TICKS);
       c.fillStyle = '#777';
       c.textAlign = 'left';
-      c.fillText(fmtNum(rightMax * frac), plotRight + 10, y);
+      c.fillText(fmtNum(rv), plotRight + 10, yRight.y(rv));
     }
   }
 
@@ -404,6 +426,7 @@ function render(c, w, h, withBg) {
   };
 
   barHits = [];
+  const brokenBars = [];   // bar rects spanning the break band, for the markers
   if (!stacked) {
     // Bars (grouped side-by-side within each slot). Each bar keeps a constant
     // width, but only the bars that actually have a value are drawn and they're
@@ -424,11 +447,12 @@ function render(c, w, h, withBg) {
       present.forEach((s, k) => {
         const v = Number(s.values[ci]);
         const axisMax = scaleFor(s) || 1;
-        const bh = Math.min(v / axisMax, 1) * plotH;
+        const by = mapFor(effAxis(s)).y(Math.min(v, axisMax));
+        const bh = plotBottom - by;
         const bx = subLeft + k * barW + gap / 2;
         const bw = Math.max(barW - gap, 1);
-        const by = plotBottom - bh;
         const color = barColor(s, ci);
+        if (yLeft.active && effAxis(s) === 'left' && by < yLeft.bandTop) brokenBars.push({ bx, bw });
         c.fillStyle = color;
         c.fillRect(bx, by, bw, bh);
         barHits.push({ x: bx, y: by, w: bw, h: bh, seriesId: s.id, ci });
@@ -452,11 +476,15 @@ function render(c, w, h, withBg) {
       if (!segs.length) return;
       const sum = segs.reduce((a, x) => a + x.v, 0);
 
-      let yCursor = plotBottom;
+      let cum = 0;
+      let stackTopY = plotBottom;
       segs.forEach(({ s, v }) => {
-        const frac = pct100 ? v / sum : v / (leftMax || 1);
-        const bh = Math.min(frac, 1) * plotH;
-        const by = yCursor - bh;
+        const val0 = pct100 ? cum / sum * 100 : Math.min(cum, leftMax);
+        cum += v;
+        const val1 = pct100 ? cum / sum * 100 : Math.min(cum, leftMax);
+        const by = yLeft.y(val1);
+        const bh = Math.max(yLeft.y(val0) - by, 0);
+        stackTopY = by;
         const color = barColor(s, ci);
         c.fillStyle = color;
         c.fillRect(bx, by, groupW, bh);
@@ -475,12 +503,39 @@ function render(c, w, h, withBg) {
           c.textBaseline = 'middle';
           c.fillText(txt, center, by + bh / 2);
         }
-        yCursor = by;
       });
 
+      if (yLeft.active && stackTopY < yLeft.bandTop) brokenBars.push({ bx, bw: groupW });
       if (state.showStackTotals)
-        drawValueLabel(c, fmtNum(sum), center, yCursor - 3, '#888888', state.valueFontSize);
+        drawValueLabel(c, fmtNum(sum), center, stackTopY - 3, '#888888', state.valueFontSize);
     });
+  }
+
+  // Axis-break markers: punch a thin gap through each bar spanning the band
+  // and draw slash marks there, plus a marker on the axis itself.
+  if (yLeft.active) {
+    const midY = (yLeft.bandTop + yLeft.bandBottom) / 2;
+    const halfGap = 3;
+    const slashes = (x0, x1) => {
+      c.strokeStyle = '#888888';
+      c.lineWidth = 1.5;
+      for (const yy of [midY - halfGap, midY + halfGap]) {
+        c.beginPath();
+        c.moveTo(x0, yy + 3);
+        c.lineTo(x1, yy - 3);
+        c.stroke();
+      }
+    };
+    const punch = (x, wdt) => {
+      if (withBg) { c.fillStyle = state.bgColor; c.fillRect(x, midY - halfGap, wdt, halfGap * 2); }
+      else c.clearRect(x, midY - halfGap, wdt, halfGap * 2);
+    };
+    brokenBars.forEach(({ bx, bw }) => {
+      punch(bx - 1, bw + 2);
+      slashes(bx - 3, bx + bw + 3);
+    });
+    punch(plotLeft - 8, 16);
+    slashes(plotLeft - 6, plotLeft + 6);
   }
 
   // Lines (one polyline per line series, gaps on null values)
@@ -492,7 +547,7 @@ function render(c, w, h, withBg) {
       if (!isFinite(v) || s.values[ci] === null || s.values[ci] === '') return null;
       return {
         x: plotLeft + slotW * (ci + 0.5),
-        y: plotBottom - Math.min(v / axisMax, 1) * plotH,
+        y: mapFor(effAxis(s)).y(Math.min(v, axisMax)),
         v,
       };
     });
@@ -527,11 +582,14 @@ function render(c, w, h, withBg) {
   // ── Annotations (CAGR/diff arrows + value lines) — drawn on top ────────────
   if (c === ctx) {
     annHits = [];
-    plotMetrics = { plotTop, plotBottom, plotH, leftMax, rightMax };
+    plotMetrics = { plotTop, plotBottom, plotH, leftMax, rightMax, yLeft, yRight };
   }
   const xForCi = ci => plotLeft + slotW * (ci + 0.5);
-  const axisMaxOf = axis => (axis === 'right' && hasRight) ? rightMax : leftMax;
-  const yOf = (v, axisMax) => plotBottom - Math.min(Math.max(v / (axisMax || 1), 0), 1) * plotH;
+  const yOf = (v, axis) => {
+    const eff = (axis === 'right' && hasRight) ? 'right' : 'left';
+    const max = eff === 'right' ? rightMax : leftMax;
+    return mapFor(eff).y(Math.min(Math.max(v, 0), max || 1));
+  };
 
   // Positive-stack running sums at a category, keyed by series id.
   const stackInfo = ci => {
@@ -553,13 +611,13 @@ function render(c, w, h, withBg) {
       if (stacked) {
         const { sum } = stackInfo(ci);
         if (sum <= 0) return null;
-        return { value: sum, y: yOf(pct100 ? 100 : sum, leftMax) };
+        return { value: sum, y: yOf(pct100 ? 100 : sum, 'left') };
       }
       const s0 = barSeries[0] || state.series[0];
       if (!s0) return null;
       const v = Number(s0.values[ci]);
       if (!isFinite(v)) return null;
-      return { value: v, y: yOf(v, axisMaxOf(effAxis(s0))) };
+      return { value: v, y: yOf(v, effAxis(s0)) };
     }
     const s = state.series.find(sr => sr.id === ann.seriesId);
     if (!s) return null;
@@ -569,16 +627,16 @@ function render(c, w, h, withBg) {
       const { sum, cums } = stackInfo(ci);
       if (sum <= 0 || !(v > 0)) return null;
       const cum = cums.get(s.id) ?? 0;
-      return { value: v, y: yOf(pct100 ? cum / sum * 100 : cum, leftMax) };
+      return { value: v, y: yOf(pct100 ? cum / sum * 100 : cum, 'left') };
     }
-    return { value: v, y: yOf(v, axisMaxOf(effAxis(s))) };
+    return { value: v, y: yOf(v, effAxis(s)) };
   };
 
   state.annotations.forEach(ann => {
     if (ann.type === 'line') {
       const v = Number(ann.value);
       if (!isFinite(v)) return;
-      const ly = yOf(v, axisMaxOf(ann.axis));
+      const ly = yOf(v, ann.axis);
       drawValueLine(c, plotLeft, plotRight, ly, { color: ann.color });
       const txt = [ann.label, ann.showValue ? fmtNum(v) : ''].filter(Boolean).join(' ');
       if (txt) {
@@ -688,6 +746,7 @@ function getConfig() {
       ({ name, color, kind, axis, showLabels, prefix, suffix, values: values.slice(),
          overrides: (overrides || []).map(v => v || null) })),
     dualAxis: state.dualAxis,
+    axisBreak: { ...state.axisBreak },
     showGrid: state.showGrid,
     showLegend: state.showLegend,
     legendPos: state.legendPos,
@@ -735,6 +794,12 @@ function restore() {
     overrides: Array.isArray(s.overrides) ? s.overrides.map(v => isHex6(v) ? v : null) : [],
   }));
   state.dualAxis   = data.dualAxis   ?? true;
+  // Migration: saves from before axis breaks lack the key — default disabled.
+  state.axisBreak = {
+    enabled: data.axisBreak?.enabled === true,
+    from: Number.isFinite(data.axisBreak?.from) ? data.axisBreak.from : null,
+    to:   Number.isFinite(data.axisBreak?.to)   ? data.axisBreak.to   : null,
+  };
   state.showGrid   = data.showGrid   ?? true;
   state.showLegend = data.showLegend ?? true;
   state.legendPos  = ['top', 'bottom', 'left', 'right'].includes(data.legendPos) ? data.legendPos : 'top';
@@ -1184,6 +1249,36 @@ bindToggle('toggleLegend', 'showLegend', buildLegendPos);
 bindToggle('toggleDual',   'dualAxis', () => { renderSeries(); renderAnnotations(); });  // re-enable/disable axis toggles
 bindToggle('toggleStackTotals', 'showStackTotals');
 
+// ── Axis break controls ───────────────────────────────────────────────────────
+function updateBreakHint() {
+  const el = document.getElementById('breakHint');
+  const b = state.axisBreak;
+  if (!b.enabled) { el.textContent = ''; return; }
+  const lm = plotMetrics ? plotMetrics.leftMax : null;
+  const ok = Number.isFinite(b.from) && Number.isFinite(b.to) &&
+             b.from > 0 && b.to > b.from && (lm === null || b.to < lm);
+  el.textContent = ok ? '' :
+    'Need 0 < from < to < axis max' + (lm !== null ? ' (' + fmtNum(lm) + ')' : '') + ' — break inactive.';
+}
+
+document.getElementById('toggleAxisBreak').addEventListener('click', () => {
+  state.axisBreak.enabled = !state.axisBreak.enabled;
+  syncToggleBtn('toggleAxisBreak', state.axisBreak.enabled);
+  document.getElementById('axisBreakInputs').hidden = !state.axisBreak.enabled;
+  renderPreview();
+  updateBreakHint();
+});
+document.getElementById('breakFrom').addEventListener('input', e => {
+  state.axisBreak.from = e.target.value === '' ? null : parseFloat(e.target.value);
+  renderPreview();
+  updateBreakHint();
+});
+document.getElementById('breakTo').addEventListener('input', e => {
+  state.axisBreak.to = e.target.value === '' ? null : parseFloat(e.target.value);
+  renderPreview();
+  updateBreakHint();
+});
+
 document.getElementById('comboTitle').addEventListener('input', e => {
   state.title = e.target.value;
   renderPreview();
@@ -1328,8 +1423,12 @@ window.addEventListener('mousemove', e => {
   if (ann.type === 'arrow') {
     ann.yOffset = Math.min(Math.max(annDrag.orig - dy, 8), 600);
   } else {
-    const axisMax = (ann.axis === 'right' && state.dualAxis) ? plotMetrics.rightMax : plotMetrics.leftMax;
-    const raw = annDrag.orig - dy / plotMetrics.plotH * axisMax;
+    const right = ann.axis === 'right' && state.dualAxis;
+    const m = right ? plotMetrics.yRight : plotMetrics.yLeft;
+    const axisMax = right ? plotMetrics.rightMax : plotMetrics.leftMax;
+    // Map through the (possibly broken) axis: pixel of the original value,
+    // shifted by the drag, back to a value.
+    const raw = m.yInv(m.y(annDrag.orig) + dy);
     const step = (axisMax / TICKS) / 10 || 1;
     ann.value = Math.round(Math.min(Math.max(raw, 0), axisMax) / step) * step;
     ann.value = Math.round(ann.value * 100) / 100;
@@ -1400,6 +1499,11 @@ function syncControls() {
   syncToggleBtn('toggleLegend', state.showLegend);
   syncToggleBtn('toggleDual',   state.dualAxis);
   syncToggleBtn('toggleStackTotals', state.showStackTotals);
+  syncToggleBtn('toggleAxisBreak', state.axisBreak.enabled);
+  document.getElementById('axisBreakInputs').hidden = !state.axisBreak.enabled;
+  document.getElementById('breakFrom').value = state.axisBreak.from ?? '';
+  document.getElementById('breakTo').value = state.axisBreak.to ?? '';
+  updateBreakHint();
   applyBgColor(state.bgColor);
   buildSliders();
   buildLegendPos();
@@ -1442,6 +1546,11 @@ function applyImportData(data) {
   if (data.title != null)                  state.title      = String(data.title);
   if (typeof data.showTitle  === 'boolean') state.showTitle  = data.showTitle;
   if (typeof data.dualAxis   === 'boolean') state.dualAxis   = data.dualAxis;
+  state.axisBreak = {
+    enabled: data.axisBreak?.enabled === true,
+    from: Number.isFinite(data.axisBreak?.from) ? data.axisBreak.from : null,
+    to:   Number.isFinite(data.axisBreak?.to)   ? data.axisBreak.to   : null,
+  };
   if (typeof data.showGrid   === 'boolean') state.showGrid   = data.showGrid;
   if (typeof data.showLegend === 'boolean') state.showLegend = data.showLegend;
   if (['top', 'bottom', 'left', 'right'].includes(data.legendPos)) state.legendPos = data.legendPos;
