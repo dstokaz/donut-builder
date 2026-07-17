@@ -26,6 +26,8 @@
       <div class="panel-title">Bars</div>
       <div id="bars-list"></div>
       <button id="add-bar" class="btn-add">+ Add bar</button>
+      <div class="import-hint">Tip: paste label + value rows from Excel / Sheets
+        into a label field to append bars.</div>
     </div>
 
     <div class="section">
@@ -587,6 +589,24 @@ function refreshComputed() {
   });
 }
 
+// Append bars pasted as Excel/Sheets rows: label value — or just values.
+function pasteBarsBlock(rows) {
+  const added = [];
+  rows.forEach(row => {
+    const cells = row.filter(c => c !== '');
+    if (!cells.length) return;
+    let label, val;
+    if (parseValue(cells[0]) === null) { label = cells[0]; val = parseValue(cells[1]); }
+    else { label = 'Bar ' + (state.bars.length + added.length + 1); val = parseValue(cells[0]); }
+    if (val !== null) added.push(mkBar(label, 'delta', val));
+  });
+  if (!added.length) return false;
+  state.bars.push(...added);
+  renderBars();
+  renderPreview();
+  return true;
+}
+
 function renderBars() {
   const list = document.getElementById('bars-list');
   list.innerHTML = '';
@@ -616,6 +636,10 @@ function renderBars() {
       bar.label = e.target.value;
       renderAnnotations();   // arrow pickers list bar labels
       renderPreview();
+    });
+    labelIn.addEventListener('paste', e => {
+      const rows = parseTSVBlock(e.clipboardData && e.clipboardData.getData('text'));
+      if (rows && pasteBarsBlock(rows)) e.preventDefault();
     });
 
     const autoBtn = document.createElement('button');
@@ -1053,6 +1077,7 @@ function syncControls() {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
+initPanelSections(STORAGE_KEY, ['Background', 'Import', 'Export']);
 restore();
 renderBars();
 syncControls();

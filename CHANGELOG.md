@@ -1,5 +1,21 @@
 # Changelog
 
+## [2026-07-17] — Panel ergonomics + stale-cache fix
+
+### Fixed
+- **Pages could load a stale cached `shared.js`** and die on the first missing symbol (this is what made the new waterfall builder appear completely broken). The dev server now sends `Cache-Control: no-cache` (`Caddyfile.dev`) and shared asset links are versioned — one hard refresh (Cmd+Shift+R) flushes the old cache, then it's automatic
+- Waterfall default colors failed dark-surface validation (totals at 1.97:1 contrast, red/green pair below colorblind thresholds) — replaced with a validated trio: green `#199e70` / slate `#64748b` / red `#e66767`
+
+### Added
+- **Collapsible panel sections** — click any section title to collapse it; state is remembered per page. Background / Import / Export start collapsed, so the panel opens showing only what you edit
+- **Paste from Excel / Google Sheets** everywhere data is entered:
+  - Combo: paste a block into any matrix cell — fills from that cell, extends categories to fit
+  - Waterfall / Donut: paste label + value rows into a label field to append bars/segments (donut keeps raw values like `~450`)
+  - Scatter: paste `label · x · y · size` rows into a points table to append points
+- 2px gaps between stacked combo segments so each block reads separately; section separators and tighter panel spacing; the waterfall reset-color button only appears once a bar color is overridden
+
+---
+
 ## [2026-07-17] — Axis breaks (combo + waterfall)
 
 ### Added

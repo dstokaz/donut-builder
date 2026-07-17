@@ -24,6 +24,19 @@ function fmtNum(n) {
 // Strict #RRGGBB test — validates colors from imports and saved state.
 const isHex6 = v => /^#[0-9a-fA-F]{6}$/.test(String(v));
 
+// Parse clipboard text as a TSV block (what Excel / Sheets put on the
+// clipboard). Returns rows of trimmed cells, or null when the text is just a
+// single value (so normal single-cell paste keeps working).
+function parseTSVBlock(text) {
+  if (!text) return null;
+  const rows = String(text).replace(/\r/g, '').split('\n')
+    .filter(l => l.trim() !== '')
+    .map(l => l.split('\t').map(c => c.trim()));
+  if (!rows.length) return null;
+  const multi = rows.length > 1 || rows[0].length > 1;
+  return multi ? rows : null;
+}
+
 // Set up a canvas scaled to the device pixel ratio for crisp HiDPI rendering.
 // Returns the 2D context (already scaled). Render code can then work in CSS px.
 function setupCanvas(canvas, w, h) {
@@ -417,6 +430,33 @@ function wrapLabel(c, text, maxW, maxLines = 3) {
   while (last && !fits(last + '…')) last = last.slice(0, -1);
   kept[maxLines - 1] = last + '…';
   return kept;
+}
+
+// ── Collapsible panel sections ──────────────────────────────────────────────
+// Clicking a .panel-title collapses/expands its section. Collapsed state is
+// remembered per page under `${storageKey}-ui` (kept out of the chart config
+// so it never leaks into JSON exports).
+function initPanelSections(storageKey, collapsedByDefault = []) {
+  const KEY = storageKey + '-ui';
+  const ui = loadState(KEY) || {};
+  document.querySelectorAll('#panel .section').forEach(sec => {
+    const title = sec.querySelector('.panel-title');
+    if (!title) return;
+    const name = title.textContent.trim();
+
+    const body = document.createElement('div');
+    body.className = 'section-body';
+    while (title.nextSibling) body.appendChild(title.nextSibling);
+    sec.appendChild(body);
+
+    sec.classList.toggle('collapsed', ui[name] ?? collapsedByDefault.includes(name));
+    title.addEventListener('click', () => {
+      const collapsed = !sec.classList.contains('collapsed');
+      sec.classList.toggle('collapsed', collapsed);
+      ui[name] = collapsed;
+      saveState(KEY, ui);
+    });
+  });
 }
 
 // ── Chart navigation ────────────────────────────────────────────────────────

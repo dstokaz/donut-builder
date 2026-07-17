@@ -15,6 +15,8 @@
       <div class="panel-title">Segments</div>
       <div id="items-list"></div>
       <button id="add-item-btn" class="btn-add">+ Add segment</button>
+      <div class="import-hint">Tip: paste label + value rows from Excel / Sheets
+        into a label field to append segments.</div>
     </div>
 
     <div class="section">
@@ -675,6 +677,26 @@ function refreshPctFields() {
   });
 }
 
+// Append segments pasted as Excel/Sheets rows: label value — or just values.
+// Values keep their raw text (so prefixes like ~600 survive, as in the inputs).
+function pasteItemsBlock(rows) {
+  const added = [];
+  rows.forEach(row => {
+    const cells = row.filter(c => c !== '');
+    if (!cells.length) return;
+    let label, value;
+    if (parseValue(cells[0]) === null) { label = cells[0]; value = cells[1] ?? null; }
+    else { label = 'Segment ' + (state.items.length + added.length + 1); value = cells[0]; }
+    added.push(mkItem(label, value === '' ? null : value,
+                      null, PALETTE[(state.items.length + added.length) % PALETTE.length]));
+  });
+  if (!added.length) return false;
+  state.items.push(...added);
+  renderItems();
+  renderPreview();
+  return true;
+}
+
 function renderItems() {
   const list = document.getElementById('items-list');
   list.innerHTML = '';
@@ -699,6 +721,10 @@ function renderItems() {
     labelIn.placeholder = 'Label';
     labelIn.dataset.itemId = item.id;
     labelIn.addEventListener('input', e => { item.label = e.target.value; renderPreview(); });
+    labelIn.addEventListener('paste', e => {
+      const rows = parseTSVBlock(e.clipboardData && e.clipboardData.getData('text'));
+      if (rows && pasteItemsBlock(rows)) e.preventDefault();
+    });
 
     // Value — text so user can type prefixes like ~
     const valIn = document.createElement('input');
@@ -1178,6 +1204,7 @@ function syncControls() {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
+initPanelSections(STORAGE_KEY, ['Background', 'Import', 'Export']);
 restore();
 renderItems();
 syncControls();

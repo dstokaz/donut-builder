@@ -34,6 +34,8 @@
       <div class="panel-title">Series &amp; Points</div>
       <div id="series-list"></div>
       <button id="add-series" class="btn-add">+ Add series</button>
+      <div class="import-hint">Tip: paste rows from Excel / Sheets into a table
+        — label, x, y, size columns — to append points.</div>
     </div>
 
     <div class="section">
@@ -551,6 +553,26 @@ function restore() {
 }
 
 // ── UI: Series cards with point tables ───────────────────────────────────────
+
+// Append points pasted as Excel/Sheets rows: [label] x y [size].
+function pastePointsBlock(s, rows) {
+  const added = [];
+  rows.forEach(row => {
+    let cells = row.filter(c => c !== '');
+    let label = '';
+    if (cells.length && parseValue(cells[0]) === null) { label = cells[0]; cells = cells.slice(1); }
+    const x = parseValue(cells[0]);
+    const y = parseValue(cells[1]);
+    const size = parseValue(cells[2]);
+    if (x !== null && y !== null) added.push(mkPoint(label, x, y, size));
+  });
+  if (!added.length) return false;
+  s.points.push(...added);
+  renderSeries();
+  renderPreview();
+  return true;
+}
+
 function renderSeries() {
   const list = document.getElementById('series-list');
   list.innerHTML = '';
@@ -613,6 +635,10 @@ function renderSeries() {
         input.value = value ?? '';
         if (ph) input.placeholder = ph;
         input.addEventListener('input', e => { onCh(e.target.value); renderPreview(); });
+        input.addEventListener('paste', e => {
+          const rows = parseTSVBlock(e.clipboardData && e.clipboardData.getData('text'));
+          if (rows && pastePointsBlock(s, rows)) e.preventDefault();
+        });
         td.appendChild(input);
         return td;
       };
@@ -1007,6 +1033,7 @@ function syncControls() {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
+initPanelSections(STORAGE_KEY, ['Background', 'Import', 'Export']);
 restore();
 renderSeries();
 renderAnnotations();

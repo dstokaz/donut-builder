@@ -37,6 +37,8 @@
     <div class="section">
       <div class="panel-title">Values</div>
       <div class="matrix-wrap"><div id="matrix"></div></div>
+      <div class="import-hint">Tip: click a cell and paste a block straight from
+        Excel / Sheets — categories extend to fit.</div>
     </div>
 
     <div class="section">
@@ -988,6 +990,26 @@ document.getElementById('add-series').addEventListener('click', () => {
 });
 
 // ── UI: Value matrix (series rows × category columns) ──────────────────────────
+
+// Apply a pasted Excel/Sheets block anchored at series sIdx / category ci.
+// Categories extend to fit wide blocks; rows beyond the last series are ignored.
+function pasteMatrixBlock(sIdx, ci, rows) {
+  const needCols = ci + Math.max(...rows.map(r => r.length));
+  while (state.categories.length < needCols) {
+    state.categories.push('Cat ' + (state.categories.length + 1));
+    state.series.forEach(sr => { sr.values.push(null); sr.overrides.push(null); });
+  }
+  rows.forEach((row, ri) => {
+    const target = state.series[sIdx + ri];
+    if (!target) return;
+    row.forEach((cell, cj) => { target.values[ci + cj] = parseValue(cell); });
+  });
+  renderCategories();
+  renderSeries();
+  renderMatrix();
+  renderPreview();
+}
+
 function renderMatrix() {
   const host = document.getElementById('matrix');
   host.innerHTML = '';
@@ -1032,6 +1054,12 @@ function renderMatrix() {
         const raw = e.target.value;
         s.values[ci] = raw === '' ? null : parseFloat(raw);
         renderPreview();   // no rebuild — keep cell focus
+      });
+      input.addEventListener('paste', e => {
+        const rows = parseTSVBlock(e.clipboardData && e.clipboardData.getData('text'));
+        if (!rows) return;   // single value: let the normal paste through
+        e.preventDefault();
+        pasteMatrixBlock(state.series.indexOf(s), ci, rows);
       });
       td.appendChild(input);
       tr.appendChild(td);
@@ -1588,6 +1616,7 @@ function applyImportData(data) {
 initImportPanel(applyImportData);
 
 // ── Init ──────────────────────────────────────────────────────────────────────
+initPanelSections(STORAGE_KEY, ['Background', 'Import', 'Export']);
 restore();
 state.series.forEach(alignValues);   // also sizes the default series' overrides
 
