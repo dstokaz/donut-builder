@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Combo Chart Builder</title>
-<link rel="stylesheet" href="shared.css">
+<link rel="stylesheet" href="shared.css?v=2">
 </head>
 <body>
 
@@ -148,7 +148,7 @@
   <canvas id="canvas"></canvas>
 </div>
 
-<script src="shared.js"></script>
+<script src="shared.js?v=2"></script>
 <script>
 // ── State ──────────────────────────────────────────────────────────────────
 let nextId = 1;
@@ -478,13 +478,15 @@ function render(c, w, h, withBg) {
 
       let cum = 0;
       let stackTopY = plotBottom;
-      segs.forEach(({ s, v }) => {
+      const cuts = [];   // internal segment boundaries, for the surface gaps
+      segs.forEach(({ s, v }, si) => {
         const val0 = pct100 ? cum / sum * 100 : Math.min(cum, leftMax);
         cum += v;
         const val1 = pct100 ? cum / sum * 100 : Math.min(cum, leftMax);
         const by = yLeft.y(val1);
         const bh = Math.max(yLeft.y(val0) - by, 0);
         stackTopY = by;
+        if (si > 0) cuts.push(by + bh);   // bottom edge = boundary to the segment below
         const color = barColor(s, ci);
         c.fillStyle = color;
         c.fillRect(bx, by, groupW, bh);
@@ -503,6 +505,12 @@ function render(c, w, h, withBg) {
           c.textBaseline = 'middle';
           c.fillText(txt, center, by + bh / 2);
         }
+      });
+
+      // 2px surface gap between stacked segments so each block reads separately.
+      cuts.forEach(cy => {
+        if (withBg) { c.fillStyle = state.bgColor; c.fillRect(bx, cy - 1, groupW, 2); }
+        else c.clearRect(bx, cy - 1, groupW, 2);
       });
 
       if (yLeft.active && stackTopY < yLeft.bandTop) brokenBars.push({ bx, bw: groupW });

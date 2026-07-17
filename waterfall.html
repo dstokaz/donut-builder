@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Waterfall Builder</title>
-<link rel="stylesheet" href="shared.css">
+<link rel="stylesheet" href="shared.css?v=2">
 </head>
 <body>
 
@@ -138,7 +138,7 @@
   <canvas id="canvas"></canvas>
 </div>
 
-<script src="shared.js"></script>
+<script src="shared.js?v=2"></script>
 <script>
 // ── State ──────────────────────────────────────────────────────────────────
 let nextId = 1;
@@ -153,7 +153,9 @@ const state = {
   title: 'EBITDA bridge',
   showTitle: true,
   bars: [],
-  colors: { pos: '#27AE60', neg: '#E84545', total: '#4A4A4A' },
+  // Validated for the dark surface: pos/neg pass CVD checks (with the signed
+  // labels as secondary encoding) and totals stay a readable neutral slate.
+  colors: { pos: '#199e70', neg: '#e66767', total: '#64748b' },
   showConnectors: true,
   showValues: true,
   valuePrefix: '',
@@ -599,7 +601,11 @@ function renderBars() {
     top.className = 'series-card-top';
     top.style.gridTemplateColumns = '28px 1fr 28px 28px';
 
-    const swatch = colorSwatch(effColor(comp), hex => { bar.color = hex; renderPreview(); });
+    const swatch = colorSwatch(effColor(comp), hex => {
+      bar.color = hex;
+      autoBtn.hidden = false;   // reset-to-auto becomes meaningful
+      renderPreview();
+    });
     swatch.dataset.barId = bar.id;
 
     const labelIn = document.createElement('input');
@@ -616,7 +622,13 @@ function renderBars() {
     autoBtn.className = 'btn-icon';
     autoBtn.textContent = '↺';
     autoBtn.title = 'Reset color to automatic (by type/sign)';
-    autoBtn.addEventListener('click', () => { bar.color = null; refreshComputed(); renderPreview(); });
+    autoBtn.hidden = !bar.color;   // only relevant once a color is overridden
+    autoBtn.addEventListener('click', () => {
+      bar.color = null;
+      autoBtn.hidden = true;
+      refreshComputed();
+      renderPreview();
+    });
 
     const del = document.createElement('button');
     del.className = 'btn-icon delete';

@@ -1,0 +1,9 @@
+# Dev server config (used by docker-compose.yml).
+# Cache-Control: no-cache = browsers may store files but must revalidate before
+# every use — so edits to shared.js/shared.css are picked up immediately instead
+# of being served stale for days by heuristic caching.
+:80 {
+	root * /srv
+	file_server browse
+	header Cache-Control "no-cache"
+}
