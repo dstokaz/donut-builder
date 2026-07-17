@@ -104,10 +104,33 @@
     </div>
 
     <div class="section">
+      <div class="panel-title">Import</div>
+      <button id="toggleImport" class="btn-add">Import JSON…</button>
+      <div id="import-panel" hidden>
+        <textarea id="importText" class="import-textarea" spellcheck="false"
+          placeholder='{
+  "items": [
+    { "label": "Invoice Status", "value": 600 },
+    { "label": "Other internal", "pct": 20 },
+    { "label": "External", "pct": 20 }
+  ]
+}'></textarea>
+        <div class="import-hint">Accepts plain data, or a full config exported below
+          (colors, center text, sizes, background).</div>
+        <div id="importMsg" class="import-msg"></div>
+        <div class="export-btns">
+          <button class="btn-export primary" id="applyImport">Apply</button>
+          <button class="btn-export" id="cancelImport">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
       <div class="panel-title">Export</div>
       <div class="export-btns">
         <button class="btn-export primary" onclick="exportChart(true)">Export PNG</button>
         <button class="btn-export" onclick="exportChart(false)">Export PNG (transparent)</button>
+        <button class="btn-export" onclick="exportJSON()">Export JSON (data + config)</button>
       </div>
     </div>
 
@@ -115,16 +138,7 @@
 </div>
 
 <div id="preview">
-  <nav class="chart-tabs">
-    <a class="chart-tab home" href="index.html" aria-label="All charts" title="All charts">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/>
-      </svg>
-    </a>
-    <a class="chart-tab active" href="donut.html">Donut</a>
-    <a class="chart-tab" href="combo.html">Combo</a>
-  </nav>
+  <nav class="chart-tabs"></nav>
   <canvas id="canvas"></canvas>
 </div>
 
@@ -277,7 +291,6 @@ function render(c, w, h, withBg) {
   const pctFontSz  = s * state.pctFontSize  / 100;
   const nameFontSz = s * state.nameFontSize / 100;
   const valFontSz  = s * state.valFontSize  / 100;
-  const ff = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 
   if (c === ctx) labelHitAreas = [];
 
@@ -337,7 +350,7 @@ function render(c, w, h, withBg) {
 
     // Percentage (large, colored)
     if (state.showPct) {
-      c.font = `700 ${pctFontSz}px ${ff}`;
+      c.font = `700 ${pctFontSz}px ${FF}`;
       c.fillStyle = seg.color;
       c.textAlign = textAlign;
       c.textBaseline = 'alphabetic';
@@ -346,7 +359,7 @@ function render(c, w, h, withBg) {
 
     // Label name
     if (state.showLabel) {
-      c.font = `600 ${nameFontSz}px ${ff}`;
+      c.font = `600 ${nameFontSz}px ${FF}`;
       c.fillStyle = '#e4e4e4';
       c.textAlign = textAlign;
       c.textBaseline = 'alphabetic';
@@ -355,7 +368,7 @@ function render(c, w, h, withBg) {
 
     // Value (optional) — shown as-is, user controls the text including any ~ prefix
     if (state.showValue && seg.value !== null && seg.value !== '') {
-      c.font = `400 ${valFontSz}px ${ff}`;
+      c.font = `400 ${valFontSz}px ${FF}`;
       c.fillStyle = '#777';
       c.textAlign = textAlign;
       c.textBaseline = 'alphabetic';
@@ -369,7 +382,7 @@ function render(c, w, h, withBg) {
 
   if (state.showCenterTitle && state.centerTitle) {
     const sz = s * 0.028;
-    c.font = `500 ${sz}px ${ff}`;
+    c.font = `500 ${sz}px ${FF}`;
     c.fillStyle = '#888';
     c.textBaseline = 'alphabetic';
     const titleY = cy - s * 0.072;
@@ -381,7 +394,7 @@ function render(c, w, h, withBg) {
   }
   if (state.showCenterValue && state.centerValue) {
     const sz = s * 0.105;
-    c.font = `700 ${sz}px ${ff}`;
+    c.font = `700 ${sz}px ${FF}`;
     c.fillStyle = '#fff';
     c.textBaseline = 'middle';
     c.fillText(state.centerValue, cx, cy);
@@ -392,7 +405,7 @@ function render(c, w, h, withBg) {
   }
   if (state.showCenterSub && state.centerSub) {
     const sz = s * 0.028;
-    c.font = `400 ${sz}px ${ff}`;
+    c.font = `400 ${sz}px ${FF}`;
     c.fillStyle = '#777';
     c.textBaseline = 'top';
     const subY = cy + s * 0.068;
@@ -412,10 +425,13 @@ function renderPreview() {
 // ── Persistence (localStorage) ────────────────────────────────────────────────
 const STORAGE_KEY = 'donut-builder-v1';
 
-function persist() {
-  saveState(STORAGE_KEY, {
-    items: state.items.map(({ id, label, value, pct, color, labelOffset }) =>
-      ({ id, label, value, pct, color, labelOffset })),
+// Full, portable snapshot of the chart: data + visual configuration. Shared by
+// localStorage persistence and JSON export so the two never drift. Item ids are
+// internal-only and omitted (import/restore reassign them).
+function getConfig() {
+  return {
+    items: state.items.map(({ label, value, pct, color, labelOffset }) =>
+      ({ label, value, pct, color, labelOffset: { ...labelOffset } })),
     centerTitle:   state.centerTitle,
     centerValue:   state.centerValue,
     centerSub:     state.centerSub,
@@ -431,14 +447,19 @@ function persist() {
     showPct:   state.showPct,
     showLabel: state.showLabel,
     showValue: state.showValue,
-  });
+  };
+}
+
+function persist() {
+  saveState(STORAGE_KEY, getConfig());
 }
 
 function restore() {
   const data = loadState(STORAGE_KEY);
   if (!data || !Array.isArray(data.items) || !data.items.length) return false;
 
-  state.items         = data.items.map(it => ({ ...it, labelOffset: it.labelOffset || { x: 0, y: 0 } }));
+  state.items         = data.items.map((it, idx) =>
+    ({ ...it, id: it.id ?? idx + 1, labelOffset: it.labelOffset || { x: 0, y: 0 } }));
   state.centerTitle   = data.centerTitle   ?? state.centerTitle;
   state.centerValue   = data.centerValue   ?? state.centerValue;
   state.centerSub     = data.centerSub     ?? state.centerSub;
@@ -576,20 +597,7 @@ document.getElementById('add-item-btn').addEventListener('click', () => {
 });
 
 // ── Text visibility toggles ───────────────────────────────────────────────────
-function syncToggleBtn(id, on) {
-  const btn = document.getElementById(id);
-  if (!btn) return;
-  btn.textContent = on ? '●' : '○';
-  btn.classList.toggle('off', !on);
-}
-
-function bindToggle(id, key) {
-  document.getElementById(id).addEventListener('click', () => {
-    state[key] = !state[key];
-    syncToggleBtn(id, state[key]);
-    renderPreview();
-  });
-}
+const bindToggle = (id, key) => bindStateToggle(id, state, key, renderPreview);
 
 bindToggle('toggleCenterTitle', 'showCenterTitle');
 bindToggle('toggleCenterValue', 'showCenterValue');
@@ -599,22 +607,7 @@ bindToggle('toggleShowLabel',   'showLabel');
 bindToggle('toggleShowValue',   'showValue');
 
 // ── Background ────────────────────────────────────────────────────────────────
-const bgPicker = document.getElementById('bgColorPicker');
-const bgHex    = document.getElementById('bgColorHex');
-const bgSwatch = document.getElementById('bgSwatch');
-
-function applyBgColor(hex) {
-  state.bgColor = hex;
-  bgSwatch.style.background = hex;
-  bgPicker.value = /^#[0-9a-fA-F]{6}$/.test(hex) ? hex : '#111111';
-  bgHex.value = hex;
-  renderPreview();
-}
-
-bgPicker.addEventListener('input', e => applyBgColor(e.target.value));
-bgHex.addEventListener('input', e => {
-  if (/^#[0-9a-fA-F]{6}$/.test(e.target.value.trim())) applyBgColor(e.target.value.trim());
-});
+const applyBgColor = bindBgControl(state, renderPreview);
 
 // ── Export ────────────────────────────────────────────────────────────────────
 function exportChart(withBg) {
@@ -623,6 +616,62 @@ function exportChart(withBg) {
     filename: withBg ? 'donut.png' : 'donut-transparent.png',
   });
 }
+
+// Save the full config (data + colors + sizes + center text) as a JSON file
+// that can be re-imported via the Import panel.
+function exportJSON() {
+  downloadText('donut.json', JSON.stringify(getConfig(), null, 2));
+}
+
+// ── Import (paste JSON) ───────────────────────────────────────────────────────
+// Accepts a minimal data shape:
+//   { "items": [ { "label": "A", "value": 600 }, { "label": "B", "pct": 20 } ] }
+// …or a full config as produced by Export JSON. Per item, `value` wins over
+// `pct` (the % is then auto-computed); visual settings apply only when valid.
+function applyImportData(data) {
+  const rawItems = Array.isArray(data?.items) ? data.items : null;
+  if (!rawItems || !rawItems.length)
+    return { ok: false, msg: 'Need a non-empty "items" array.' };
+  if (!rawItems.every(it => it && it.label != null))
+    return { ok: false, msg: 'Each item needs a "label".' };
+
+  nextId = 1;
+  state.items = rawItems.map((it, i) => {
+    const pctNum = parseFloat(it.pct);
+    const off = it.labelOffset;
+    return {
+      id: nextId++,
+      label: String(it.label),
+      value: (typeof it.value === 'number' || typeof it.value === 'string') && it.value !== '' ? it.value : null,
+      pct: isFinite(pctNum) ? pctNum : null,
+      color: isHex6(it.color) ? it.color : PALETTE[i % PALETTE.length],
+      labelOffset: off && Number.isFinite(off.x) && Number.isFinite(off.y)
+        ? { x: off.x, y: off.y } : { x: 0, y: 0 },
+    };
+  });
+
+  // Optional visual configuration — applied only when present and valid.
+  const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+  if (data.centerTitle != null) state.centerTitle = String(data.centerTitle);
+  if (data.centerValue != null) state.centerValue = String(data.centerValue);
+  if (data.centerSub   != null) state.centerSub   = String(data.centerSub);
+  if (isHex6(data.bgColor)) state.bgColor = data.bgColor;
+  if (Number.isFinite(data.ringThickness)) state.ringThickness = clamp(data.ringThickness, 4, 30);
+  if (Number.isFinite(data.rotation))      state.rotation      = clamp(data.rotation, 0, 360);
+  if (Number.isFinite(data.pctFontSize))   state.pctFontSize   = clamp(data.pctFontSize, 1, 10);
+  if (Number.isFinite(data.nameFontSize))  state.nameFontSize  = clamp(data.nameFontSize, 1, 8);
+  if (Number.isFinite(data.valFontSize))   state.valFontSize   = clamp(data.valFontSize, 1, 6);
+  for (const key of ['showCenterTitle', 'showCenterValue', 'showCenterSub',
+                     'showPct', 'showLabel', 'showValue'])
+    if (typeof data[key] === 'boolean') state[key] = data[key];
+
+  renderItems();
+  syncControls();
+  renderPreview();
+  return { ok: true, msg: 'Imported ' + state.items.length + ' segments.' };
+}
+
+initImportPanel(applyImportData);
 
 // ── Chart sliders ─────────────────────────────────────────────────────────────
 document.getElementById('thicknessSlider').addEventListener('input', e => {
@@ -740,35 +789,37 @@ canvas.addEventListener('mouseleave', () => {
   }
 });
 
+// Push the current state into every panel control (inputs, toggles, sliders,
+// background). Shared by import and initial load so they can't drift.
+function syncControls() {
+  document.getElementById('centerTitle').value  = state.centerTitle;
+  document.getElementById('centerValue').value  = state.centerValue;
+  document.getElementById('centerSub').value    = state.centerSub;
+  document.getElementById('thicknessSlider').value = state.ringThickness;
+  document.getElementById('thicknessVal').textContent = state.ringThickness + '%';
+  document.getElementById('rotationSlider').value = state.rotation;
+  document.getElementById('rotationVal').textContent = state.rotation + '°';
+  document.getElementById('pctFontSlider').value = state.pctFontSize;
+  document.getElementById('pctFontVal').textContent = state.pctFontSize;
+  document.getElementById('nameFontSlider').value = state.nameFontSize;
+  document.getElementById('nameFontVal').textContent = state.nameFontSize;
+  document.getElementById('valFontSlider').value = state.valFontSize;
+  document.getElementById('valFontVal').textContent = state.valFontSize;
+
+  syncToggleBtn('toggleCenterTitle', state.showCenterTitle);
+  syncToggleBtn('toggleCenterValue', state.showCenterValue);
+  syncToggleBtn('toggleCenterSub',   state.showCenterSub);
+  syncToggleBtn('toggleShowPct',     state.showPct);
+  syncToggleBtn('toggleShowLabel',   state.showLabel);
+  syncToggleBtn('toggleShowValue',   state.showValue);
+
+  applyBgColor(state.bgColor);  // also sets picker + swatch
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 restore();
-
-// Sync panel controls from state
-document.getElementById('centerTitle').value  = state.centerTitle;
-document.getElementById('centerValue').value  = state.centerValue;
-document.getElementById('centerSub').value    = state.centerSub;
-document.getElementById('thicknessSlider').value = state.ringThickness;
-document.getElementById('thicknessVal').textContent = state.ringThickness + '%';
-document.getElementById('rotationSlider').value = state.rotation;
-document.getElementById('rotationVal').textContent = state.rotation + '°';
-document.getElementById('pctFontSlider').value = state.pctFontSize;
-document.getElementById('pctFontVal').textContent = state.pctFontSize;
-document.getElementById('nameFontSlider').value = state.nameFontSize;
-document.getElementById('nameFontVal').textContent = state.nameFontSize;
-document.getElementById('valFontSlider').value = state.valFontSize;
-document.getElementById('valFontVal').textContent = state.valFontSize;
-
-// Sync visibility toggle buttons
-syncToggleBtn('toggleCenterTitle', state.showCenterTitle);
-syncToggleBtn('toggleCenterValue', state.showCenterValue);
-syncToggleBtn('toggleCenterSub',   state.showCenterSub);
-syncToggleBtn('toggleShowPct',     state.showPct);
-syncToggleBtn('toggleShowLabel',   state.showLabel);
-syncToggleBtn('toggleShowValue',   state.showValue);
-
-applyBgColor(state.bgColor);  // also sets picker + swatch
-
 renderItems();
+syncControls();
 renderPreview();
 </script>
 </body>

@@ -4,12 +4,25 @@
 // Default color palette for new segments / series.
 const PALETTE = ['#F5A623','#4A4A4A','#666666','#888888','#2A7AFF','#E84545','#27AE60','#9B59B6'];
 
+// Font stack for all canvas text.
+const FF = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+
 // Extract the numeric portion from a value like "~600", "1,200", or 600.
 function parseValue(v) {
   if (v === null || v === undefined || v === '') return null;
   const n = parseFloat(String(v).replace(/[^\d.-]/g, ''));
   return isNaN(n) ? null : n;
 }
+
+// Format a number for display: thousands separators, one decimal for fractions.
+function fmtNum(n) {
+  if (!isFinite(n)) return '';
+  if (Number.isInteger(n)) return n.toLocaleString();
+  return (Math.round(n * 10) / 10).toLocaleString();
+}
+
+// Strict #RRGGBB test — validates colors from imports and saved state.
+const isHex6 = v => /^#[0-9a-fA-F]{6}$/.test(String(v));
 
 // Set up a canvas scaled to the device pixel ratio for crisp HiDPI rendering.
 // Returns the 2D context (already scaled). Render code can then work in CSS px.
@@ -23,6 +36,16 @@ function setupCanvas(canvas, w, h) {
   ctx.scale(dpr, dpr);
   return ctx;
 }
+
+// Canvas pixel size per aspect ratio (width is the long side, kept ~1040 so the
+// chart stays crisp; height follows the ratio). 1:1 is shrunk to fit the viewport.
+const ASPECTS = {
+  '21:9': [1040, 446],   // ultrawide / cinematic
+  '16:9': [1040, 585],
+  '3:2':  [1040, 693],
+  '4:3':  [1040, 780],
+  '1:1':  [820, 820],
+};
 
 // Export a PNG by rendering into an offscreen canvas at `scale`× resolution.
 // `render` is a callback with signature (ctx, w, h, withBg).
@@ -123,6 +146,90 @@ function colorSwatch(value, onInput) {
   return wrap;
 }
 
+// A segmented toggle: one button per option, the current one highlighted.
+// options: [{label, value}]; onChange(value).
+function makeSegToggle(options, current, disabled, onChange) {
+  const wrap = document.createElement('div');
+  wrap.className = 'seg-toggle' + (disabled ? ' disabled' : '');
+  options.forEach(opt => {
+    const btn = document.createElement('button');
+    btn.textContent = opt.label;
+    btn.classList.toggle('active', opt.value === current);
+    btn.addEventListener('click', () => onChange(opt.value));
+    wrap.appendChild(btn);
+  });
+  return wrap;
+}
+
+// Sync a ●/○ visibility toggle button (by element id) to a boolean.
+function syncToggleBtn(id, on) {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  btn.textContent = on ? '●' : '○';
+  btn.classList.toggle('off', !on);
+}
+
+// Wire a ●/○ toggle button to a boolean `key` on `state`. `onToggled()` runs
+// after each flip — typically renderPreview plus any dependent UI rebuild.
+function bindStateToggle(id, state, key, onToggled) {
+  document.getElementById(id).addEventListener('click', () => {
+    state[key] = !state[key];
+    syncToggleBtn(id, state[key]);
+    onToggled();
+  });
+}
+
+// Wire the standard background controls (#bgColorPicker / #bgColorHex /
+// #bgSwatch) to `state.bgColor`. Returns applyBgColor so pages can re-sync the
+// controls after restore/import.
+function bindBgControl(state, renderPreview) {
+  const picker = document.getElementById('bgColorPicker');
+  const hexIn  = document.getElementById('bgColorHex');
+  const swatch = document.getElementById('bgSwatch');
+  function applyBgColor(hex) {
+    state.bgColor = hex;
+    swatch.style.background = hex;
+    picker.value = isHex6(hex) ? hex : '#111111';
+    hexIn.value = hex;
+    renderPreview();
+  }
+  picker.addEventListener('input', e => applyBgColor(e.target.value));
+  hexIn.addEventListener('input', e => {
+    const v = e.target.value.trim();
+    if (isHex6(v)) applyBgColor(v);
+  });
+  return applyBgColor;
+}
+
+// Wire the standard Import panel (#toggleImport / #import-panel / #importText /
+// #importMsg / #applyImport / #cancelImport). `applyFn(parsedJson)` performs the
+// page-specific validation + state swap and returns { ok, msg }.
+function initImportPanel(applyFn) {
+  const panel = document.getElementById('import-panel');
+  const text  = document.getElementById('importText');
+  const msg   = document.getElementById('importMsg');
+  const show = (t, ok) => {
+    msg.textContent = t;
+    msg.classList.toggle('error', !ok);
+    msg.classList.toggle('ok', !!ok && !!t);
+  };
+  document.getElementById('toggleImport').addEventListener('click', () => {
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) text.focus();
+  });
+  document.getElementById('cancelImport').addEventListener('click', () => {
+    panel.hidden = true;
+    show('', true);
+  });
+  document.getElementById('applyImport').addEventListener('click', () => {
+    let data;
+    try { data = JSON.parse(text.value); }
+    catch (err) { show('Invalid JSON: ' + err.message, false); return; }
+    const res = applyFn(data);
+    show(res.msg, res.ok);
+  });
+}
+
 // Convert a #RRGGBB hex color to an rgba() string at the given alpha (0–1).
 function hexToRgba(hex, alpha) {
   const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
@@ -139,6 +246,89 @@ function niceMax(raw) {
   const f    = raw / base;
   const nice = f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10;
   return nice * base;
+}
+
+// ── Canvas drawing helpers ──────────────────────────────────────────────────
+
+// Draw a value label as a rounded "pill" tinted with `color`, centered on `cx`
+// with its bottom edge at `bottomY`. Keeps labels readable over bars/grid/bg.
+function drawValueLabel(c, text, cx, bottomY, color, fontSize) {
+  c.font = `600 ${fontSize}px ${FF}`;
+  const padX = 6, padY = 3;
+  const w = c.measureText(text).width + padX * 2;
+  const h = fontSize + padY * 2;
+  const x = cx - w / 2;
+  const y = bottomY - h;
+  const r = Math.min(6, h / 2);
+  c.beginPath();
+  c.roundRect(x, y, w, h, r);
+  c.fillStyle = hexToRgba(color, 0.22);
+  c.fill();
+  c.fillStyle = '#f0f0f0';
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  c.fillText(text, cx, y + h / 2);
+}
+
+// Break `text` into lines that each fit within `maxW` px under the current
+// c.font. Wraps on spaces; hard-breaks any single word wider than maxW. Caps at
+// `maxLines` lines, appending an ellipsis if content remains. Always returns ≥1 line.
+function wrapLabel(c, text, maxW, maxLines = 3) {
+  const fits = s => c.measureText(s).width <= maxW;
+  // Split words; hard-break any word that can't fit on its own line.
+  const words = [];
+  text.split(/\s+/).filter(Boolean).forEach(word => {
+    if (fits(word)) { words.push(word); return; }
+    let chunk = '';
+    for (const ch of word) {
+      if (chunk && !fits(chunk + ch)) { words.push(chunk); chunk = ''; }
+      chunk += ch;
+    }
+    if (chunk) words.push(chunk);
+  });
+  if (!words.length) return [text];
+
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    const next = line ? line + ' ' + word : word;
+    if (line && !fits(next)) { lines.push(line); line = word; }
+    else line = next;
+  }
+  if (line) lines.push(line);
+
+  if (lines.length <= maxLines) return lines;
+  // Truncate to maxLines, ellipsizing the last visible line.
+  const kept = lines.slice(0, maxLines);
+  let last = kept[maxLines - 1];
+  while (last && !fits(last + '…')) last = last.slice(0, -1);
+  kept[maxLines - 1] = last + '…';
+  return kept;
+}
+
+// ── Chart navigation ────────────────────────────────────────────────────────
+// One entry per builder page. Adding a new chart = one line here plus a
+// launcher card in index.html; every page's <nav class="chart-tabs"> is built
+// from this list with the current page marked active.
+const CHARTS = [
+  { href: 'donut.html', label: 'Donut' },
+  { href: 'combo.html', label: 'Combo' },
+];
+
+function initChartTabs() {
+  const nav = document.querySelector('nav.chart-tabs');
+  if (!nav) return;
+  const current = location.pathname.split('/').pop() || 'index.html';
+  nav.innerHTML =
+    `<a class="chart-tab home" href="index.html" aria-label="All charts" title="All charts">
+       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+         <path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/>
+       </svg>
+     </a>` +
+    CHARTS.map(chart =>
+      `<a class="chart-tab${chart.href === current ? ' active' : ''}" href="${chart.href}">${chart.label}</a>`
+    ).join('');
 }
 
 // ── Preview zoom ────────────────────────────────────────────────────────────
@@ -218,7 +408,12 @@ function initChartZoom() {
   apply();
 }
 
-if (document.readyState === 'loading')
-  document.addEventListener('DOMContentLoaded', initChartZoom);
-else
+function initShared() {
+  initChartTabs();
   initChartZoom();
+}
+
+if (document.readyState === 'loading')
+  document.addEventListener('DOMContentLoaded', initShared);
+else
+  initShared();

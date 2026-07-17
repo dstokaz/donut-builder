@@ -1,5 +1,17 @@
 # Changelog
 
+## [2026-07-17] — Shared engine groundwork + donut JSON import/export
+
+### Added
+- **Donut JSON round-trip** — `Export JSON (data + config)` button and an `Import JSON…` panel on the donut builder, matching the combo builder; accepts minimal `{ "items": [...] }` data or a full exported config, with validation and clamped visual settings
+- **Shared chart-tab navigation** — the tab strip on every builder is now generated from a single `CHARTS` list in `shared.js`; adding a chart page no longer requires editing every page's nav
+
+### Changed
+- Promoted common code from the builders into `shared.js`: font stack (`FF`), `fmtNum`, `isHex6`, `wrapLabel`, `drawValueLabel` (now takes an explicit font size), `makeSegToggle`, `ASPECTS`, `syncToggleBtn`, `bindStateToggle`, `bindBgControl`, and `initImportPanel` — groundwork for the upcoming waterfall and scatter builders
+- Donut persistence now flows through a `getConfig()` snapshot (same pattern as combo) so localStorage and JSON export can't drift; saved configs from previous versions restore unchanged
+
+---
+
 ## [2026-06-01] — Multi-chart builder: launcher + combo chart
 
 ### Added

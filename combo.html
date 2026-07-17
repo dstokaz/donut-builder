@@ -113,16 +113,7 @@
 </div>
 
 <div id="preview">
-  <nav class="chart-tabs">
-    <a class="chart-tab home" href="index.html" aria-label="All charts" title="All charts">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/>
-      </svg>
-    </a>
-    <a class="chart-tab" href="donut.html">Donut</a>
-    <a class="chart-tab active" href="combo.html">Combo</a>
-  </nav>
+  <nav class="chart-tabs"></nav>
   <canvas id="canvas"></canvas>
 </div>
 
@@ -176,81 +167,8 @@ function axisMaxFor(list) {
   return niceMax(max);
 }
 
-function fmtNum(n) {
-  if (!isFinite(n)) return '';
-  if (Number.isInteger(n)) return n.toLocaleString();
-  return (Math.round(n * 10) / 10).toLocaleString();
-}
-
-// Draw a value label as a rounded "pill" tinted with the series color, centered on
-// `cx` with its bottom edge at `bottomY`. Keeps labels readable over bars/grid/bg.
-function drawValueLabel(c, text, cx, bottomY, color) {
-  const fs = state.valueFontSize;
-  c.font = `600 ${fs}px ${FF}`;
-  const padX = 6, padY = 3;
-  const w = c.measureText(text).width + padX * 2;
-  const h = fs + padY * 2;
-  const x = cx - w / 2;
-  const y = bottomY - h;
-  const r = Math.min(6, h / 2);
-  c.beginPath();
-  c.roundRect(x, y, w, h, r);
-  c.fillStyle = hexToRgba(color, 0.22);
-  c.fill();
-  c.fillStyle = '#f0f0f0';
-  c.textAlign = 'center';
-  c.textBaseline = 'middle';
-  c.fillText(text, cx, y + h / 2);
-}
-
-// Break `text` into lines that each fit within `maxW` px under the current
-// c.font. Wraps on spaces; hard-breaks any single word wider than maxW. Caps at
-// `maxLines` lines, appending an ellipsis if content remains. Always returns ≥1 line.
-function wrapLabel(c, text, maxW, maxLines = 3) {
-  const fits = s => c.measureText(s).width <= maxW;
-  // Split words; hard-break any word that can't fit on its own line.
-  const words = [];
-  text.split(/\s+/).filter(Boolean).forEach(word => {
-    if (fits(word)) { words.push(word); return; }
-    let chunk = '';
-    for (const ch of word) {
-      if (chunk && !fits(chunk + ch)) { words.push(chunk); chunk = ''; }
-      chunk += ch;
-    }
-    if (chunk) words.push(chunk);
-  });
-  if (!words.length) return [text];
-
-  const lines = [];
-  let line = '';
-  for (const word of words) {
-    const next = line ? line + ' ' + word : word;
-    if (line && !fits(next)) { lines.push(line); line = word; }
-    else line = next;
-  }
-  if (line) lines.push(line);
-
-  if (lines.length <= maxLines) return lines;
-  // Truncate to maxLines, ellipsizing the last visible line.
-  const kept = lines.slice(0, maxLines);
-  let last = kept[maxLines - 1];
-  while (last && !fits(last + '…')) last = last.slice(0, -1);
-  kept[maxLines - 1] = last + '…';
-  return kept;
-}
-
 // ── Canvas Rendering ────────────────────────────────────────────────────────
-// Canvas pixel size per aspect ratio (width is the long side, kept ~1040 so the
-// chart stays crisp; height follows the ratio). 1:1 is shrunk to fit the viewport.
-const ASPECTS = {
-  '21:9': [1040, 446],   // ultrawide / cinematic
-  '16:9': [1040, 585],
-  '3:2':  [1040, 693],
-  '4:3':  [1040, 780],
-  '1:1':  [820, 820],
-};
 let [CANVAS_W, CANVAS_H] = ASPECTS[state.aspect] || ASPECTS['16:9'];
-const FF = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 const TICKS = 5;
 
 const canvas = document.getElementById('canvas');
@@ -452,7 +370,8 @@ function render(c, w, h, withBg) {
       }
 
       if (s.showLabels)
-        drawValueLabel(c, (s.prefix || '') + fmtNum(v) + (s.suffix || ''), bx + bw / 2, by - 3, color);
+        drawValueLabel(c, (s.prefix || '') + fmtNum(v) + (s.suffix || ''), bx + bw / 2, by - 3, color,
+                       state.valueFontSize);
     });
   });
 
@@ -493,7 +412,7 @@ function render(c, w, h, withBg) {
       c.fill();
       if (s.showLabels)
         drawValueLabel(c, (s.prefix || '') + fmtNum(p.v) + (s.suffix || ''),
-                       p.x, p.y - state.lineWidth * 1.4 - 3, s.color);
+                       p.x, p.y - state.lineWidth * 1.4 - 3, s.color, state.valueFontSize);
     });
   });
 }
@@ -630,19 +549,6 @@ document.getElementById('add-cat').addEventListener('click', () => {
 });
 
 // ── UI: Series cards ──────────────────────────────────────────────────────────
-function makeSegToggle(options, current, disabled, onChange) {
-  const wrap = document.createElement('div');
-  wrap.className = 'seg-toggle' + (disabled ? ' disabled' : '');
-  options.forEach(opt => {
-    const btn = document.createElement('button');
-    btn.textContent = opt.label;
-    btn.classList.toggle('active', opt.value === current);
-    btn.addEventListener('click', () => onChange(opt.value));
-    wrap.appendChild(btn);
-  });
-  return wrap;
-}
-
 function renderSeries() {
   const list = document.getElementById('series-list');
   list.innerHTML = '';
@@ -795,21 +701,8 @@ function renderMatrix() {
 }
 
 // ── Toggles ─────────────────────────────────────────────────────────────────
-function syncToggleBtn(id, on) {
-  const btn = document.getElementById(id);
-  if (!btn) return;
-  btn.textContent = on ? '●' : '○';
-  btn.classList.toggle('off', !on);
-}
-
-function bindToggle(id, key, after) {
-  document.getElementById(id).addEventListener('click', () => {
-    state[key] = !state[key];
-    syncToggleBtn(id, state[key]);
-    if (after) after();
-    renderPreview();
-  });
-}
+const bindToggle = (id, key, after) =>
+  bindStateToggle(id, state, key, () => { if (after) after(); renderPreview(); });
 
 // Legend position selector (hidden while the legend is off).
 function buildLegendPos() {
@@ -884,22 +777,7 @@ function buildSliders() {
 }
 
 // ── Background ────────────────────────────────────────────────────────────────
-const bgPicker = document.getElementById('bgColorPicker');
-const bgHex    = document.getElementById('bgColorHex');
-const bgSwatch = document.getElementById('bgSwatch');
-
-function applyBgColor(hex) {
-  state.bgColor = hex;
-  bgSwatch.style.background = hex;
-  bgPicker.value = /^#[0-9a-fA-F]{6}$/.test(hex) ? hex : '#111111';
-  bgHex.value = hex;
-  renderPreview();
-}
-
-bgPicker.addEventListener('input', e => applyBgColor(e.target.value));
-bgHex.addEventListener('input', e => {
-  if (/^#[0-9a-fA-F]{6}$/.test(e.target.value.trim())) applyBgColor(e.target.value.trim());
-});
+const applyBgColor = bindBgControl(state, renderPreview);
 
 // ── Bar color popover ─────────────────────────────────────────────────────────
 // Click a bar on the chart to recolor just that bar (one series at one
@@ -1013,15 +891,6 @@ function exportJSON() {
 // overrides aligned to categories) and the top level may carry
 // visual settings (title, dualAxis, showGrid, legend, aspect, bgColor, sizes…).
 // Anything omitted falls back to a sensible default — first series bars, rest lines.
-const importPanel = document.getElementById('import-panel');
-const importText  = document.getElementById('importText');
-const importMsg   = document.getElementById('importMsg');
-
-function showImportMsg(text, ok) {
-  importMsg.textContent = text;
-  importMsg.classList.toggle('error', !ok);
-  importMsg.classList.toggle('ok', !!ok && !!text);
-}
 
 // Push the current state into every panel control (inputs, toggles, sliders,
 // selectors, background). Shared by import and initial load so they can't drift.
@@ -1037,31 +906,15 @@ function syncControls() {
   buildAspect();
 }
 
-const isHex6 = v => /^#[0-9a-fA-F]{6}$/.test(String(v));
-
-function applyImport() {
-  let data;
-  try {
-    data = JSON.parse(importText.value);
-  } catch (err) {
-    showImportMsg('Invalid JSON: ' + err.message, false);
-    return;
-  }
-
+function applyImportData(data) {
   const cats = Array.isArray(data?.categories) ? data.categories.map(String) : null;
   const rawSeries = Array.isArray(data?.series) ? data.series : null;
-  if (!cats || !cats.length) {
-    showImportMsg('Need a non-empty "categories" array.', false);
-    return;
-  }
-  if (!rawSeries || !rawSeries.length) {
-    showImportMsg('Need a non-empty "series" array.', false);
-    return;
-  }
-  if (!rawSeries.every(s => s && Array.isArray(s.values))) {
-    showImportMsg('Each series needs a "values" array.', false);
-    return;
-  }
+  if (!cats || !cats.length)
+    return { ok: false, msg: 'Need a non-empty "categories" array.' };
+  if (!rawSeries || !rawSeries.length)
+    return { ok: false, msg: 'Need a non-empty "series" array.' };
+  if (!rawSeries.every(s => s && Array.isArray(s.values)))
+    return { ok: false, msg: 'Each series needs a "values" array.' };
 
   nextId = 1;
   state.categories = cats;
@@ -1099,23 +952,15 @@ function applyImport() {
   if (Number.isFinite(data.valueFontSize))  state.valueFontSize  = clamp(data.valueFontSize, 8, 24);
   if (Number.isFinite(data.legendFontSize)) state.legendFontSize = clamp(data.legendFontSize, 8, 24);
 
-  showImportMsg('Imported ' + state.series.length + ' series × ' + cats.length + ' categories.', true);
   renderCategories();
   renderSeries();
   renderMatrix();
   syncControls();
   setAspect(state.aspect);   // resize canvas to imported ratio, then repaint
+  return { ok: true, msg: 'Imported ' + state.series.length + ' series × ' + cats.length + ' categories.' };
 }
 
-document.getElementById('toggleImport').addEventListener('click', () => {
-  importPanel.hidden = !importPanel.hidden;
-  if (!importPanel.hidden) importText.focus();
-});
-document.getElementById('applyImport').addEventListener('click', applyImport);
-document.getElementById('cancelImport').addEventListener('click', () => {
-  importPanel.hidden = true;
-  showImportMsg('', true);
-});
+initImportPanel(applyImportData);
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 restore();
