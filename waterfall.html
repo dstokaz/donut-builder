@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Waterfall Builder</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+
+<div id="panel">
+  <div id="panel-inner">
+
+    <div class="section">
+      <div class="panel-title">Title</div>
+      <div class="field-row">
+        <div class="field-label-row">
+          <div class="field-label">Chart title</div>
+          <button class="vis-toggle" id="toggleTitle" title="Show/hide">●</button>
+        </div>
+        <input type="text" id="chartTitle" placeholder="Chart title">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Bars</div>
+      <div id="bars-list"></div>
+      <button id="add-bar" class="btn-add">+ Add bar</button>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Colors</div>
+      <div class="toggle-row">
+        <span class="field-label">Increase</span>
+        <div id="posColor"></div>
+      </div>
+      <div class="toggle-row">
+        <span class="field-label">Decrease</span>
+        <div id="negColor"></div>
+      </div>
+      <div class="toggle-row">
+        <span class="field-label">Totals</span>
+        <div id="totalColor"></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Display</div>
+      <div class="toggle-row">
+        <span class="field-label">Connectors</span>
+        <button class="vis-toggle" id="toggleConnectors" title="Show/hide">●</button>
+      </div>
+      <div class="toggle-row">
+        <span class="field-label">Grid lines</span>
+        <button class="vis-toggle" id="toggleGrid" title="Show/hide">●</button>
+      </div>
+      <div class="toggle-row">
+        <span class="field-label">Value labels</span>
+        <div class="labels-right">
+          <input type="text" id="valuePrefix" class="label-affix" placeholder="pre" maxlength="4" title="Label prefix (e.g. $)">
+          <input type="text" id="valueSuffix" class="label-affix" placeholder="suf" maxlength="4" title="Label suffix (e.g. %)">
+          <button class="vis-toggle" id="toggleValues" title="Show/hide">●</button>
+        </div>
+      </div>
+      <div class="field-stack">
+        <span class="field-label">Aspect ratio</span>
+        <div id="aspectCtl"></div>
+      </div>
+      <div id="display-sliders"></div>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Background</div>
+      <div class="bg-row">
+        <div class="bg-swatch" id="bgSwatch">
+          <input type="color" id="bgColorPicker" value="#111111">
+        </div>
+        <input type="text" id="bgColorHex" value="#111111" placeholder="#111111">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Import</div>
+      <button id="toggleImport" class="btn-add">Import JSON…</button>
+      <div id="import-panel" hidden>
+        <textarea id="importText" class="import-textarea" spellcheck="false"
+          placeholder='{
+  "bars": [
+    { "label": "FY23",   "type": "total", "value": 100 },
+    { "label": "Price",  "type": "delta", "value": 30 },
+    { "label": "Volume", "type": "delta", "value": -12 },
+    { "label": "FY24",   "type": "subtotal" }
+  ]
+}'></textarea>
+        <div class="import-hint">Accepts plain data ("type": "delta" | "subtotal" | "total";
+          subtotal values are computed), or a full config exported below.</div>
+        <div id="importMsg" class="import-msg"></div>
+        <div class="export-btns">
+          <button class="btn-export primary" id="applyImport">Apply</button>
+          <button class="btn-export" id="cancelImport">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Export</div>
+      <div class="export-btns">
+        <button class="btn-export primary" onclick="exportChart(true)">Export PNG</button>
+        <button class="btn-export" onclick="exportChart(false)">Export PNG (transparent)</button>
+        <button class="btn-export" onclick="exportJSON()">Export JSON (data + config)</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div id="preview">
+  <nav class="chart-tabs"></nav>
+  <canvas id="canvas"></canvas>
+</div>
+
+<script src="shared.js"></script>
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let nextId = 1;
+
+// type: 'delta' (floats on the running total) | 'subtotal' (computed) | 'total'
+// (restarts the running total). color null = automatic by type/sign.
+function mkBar(label, type, value) {
+  return { id: nextId++, label, type, value, color: null };
+}
+
+const state = {
+  title: 'EBITDA bridge',
+  showTitle: true,
+  bars: [],
+  colors: { pos: '#27AE60', neg: '#E84545', total: '#4A4A4A' },
+  showConnectors: true,
+  showValues: true,
+  valuePrefix: '',
+  valueSuffix: '',
+  showGrid: true,
+  aspect: '16:9',       // see shared ASPECTS
+  bgColor: '#111111',
+  barWidth: 0.6,        // fraction of a slot used by the bar
+  axisFontSize: 14,     // px
+  valueFontSize: 11,    // px
+};
+
+state.bars = [
+  mkBar('FY23',   'total',    100),
+  mkBar('Price',  'delta',     30),
+  mkBar('Volume', 'delta',    -12),
+  mkBar('FX',     'delta',     -6),
+  mkBar('FY24',   'subtotal', null),
+];
+
+const BAR_TYPES = ['delta', 'subtotal', 'total'];
+
+// ── Waterfall math ──────────────────────────────────────────────────────────
+// Walk the bars with a running total. Each computed bar spans y0→y1 in value
+// space: totals restart the running total at their value, deltas float on it
+// (crossing zero just works), subtotals drop to the baseline at the current
+// running total.
+function computeBars() {
+  let running = 0;
+  return state.bars.map(bar => {
+    const num = Number(bar.value);
+    const val = bar.value !== null && bar.value !== '' && isFinite(num) ? num : 0;
+    if (bar.type === 'total')    { running = val; return { bar, y0: 0, y1: val }; }
+    if (bar.type === 'subtotal') return { bar, y0: 0, y1: running };
+    const y0 = running;
+    running += val;
+    return { bar, y0, y1: running };
+  });
+}
+
+// Effective bar color: per-bar override, else by type/sign.
+function effColor(comp) {
+  if (comp.bar.color) return comp.bar.color;
+  if (comp.bar.type === 'delta') return comp.y1 - comp.y0 >= 0 ? state.colors.pos : state.colors.neg;
+  return state.colors.total;
+}
+
+// Value label text: deltas signed (+30 / −12), totals and subtotals plain.
+function labelText(comp) {
+  const affix = n => (state.valuePrefix || '') + fmtNum(n) + (state.valueSuffix || '');
+  if (comp.bar.type !== 'delta') return affix(comp.y1);
+  const d = comp.y1 - comp.y0;
+  return (d >= 0 ? '+' : '−') + affix(Math.abs(d));
+}
+
+// ── Canvas rendering ────────────────────────────────────────────────────────
+let [CANVAS_W, CANVAS_H] = ASPECTS[state.aspect] || ASPECTS['16:9'];
+
+const canvas = document.getElementById('canvas');
+let ctx      = setupCanvas(canvas, CANVAS_W, CANVAS_H);
+
+// Switch aspect ratio: resize the canvas backing store and repaint.
+function setAspect(a) {
+  if (!ASPECTS[a]) return;
+  state.aspect = a;
+  [CANVAS_W, CANVAS_H] = ASPECTS[a];
+  ctx = setupCanvas(canvas, CANVAS_W, CANVAS_H);
+  renderPreview();
+}
+
+function render(c, w, h, withBg) {
+  c.clearRect(0, 0, w, h);
+  if (withBg) { c.fillStyle = state.bgColor; c.fillRect(0, 0, w, h); }
+
+  const comps = computeBars();
+  if (!comps.length) return;
+
+  // Signed nice scale over everything the bars span (zero always included).
+  let lo = 0, hi = 0;
+  comps.forEach(cp => { lo = Math.min(lo, cp.y0, cp.y1); hi = Math.max(hi, cp.y0, cp.y1); });
+  const scale = niceScale(lo, hi, 5);
+
+  // Plot rectangle; the bottom strip grows with wrapped bar-label lines.
+  let top = 28;
+  if (state.showTitle && state.title) top += 34;
+  const plotTop  = top;
+  const plotLeft = 72;
+  const plotRight = w - 32;
+  const plotW = plotRight - plotLeft;
+  if (plotW <= 0) return;
+
+  const af = state.axisFontSize;
+  const slotW = plotW / comps.length;
+  const lineHeight = Math.round(af * 1.25);
+  c.font = `500 ${af}px ${FF}`;
+  const wrappedLabels = comps.map(cp => wrapLabel(c, String(cp.bar.label ?? ''), slotW - 8));
+  const maxLines = Math.max(1, ...wrappedLabels.map(l => l.length));
+  const bottomPad = Math.max(58, 12 + maxLines * lineHeight + 8);
+  const plotBottom = h - bottomPad;
+  const plotH = plotBottom - plotTop;
+  if (plotH <= 0) return;
+
+  const y = v => plotBottom - (v - scale.min) / (scale.max - scale.min) * plotH;
+
+  // Title
+  if (state.showTitle && state.title) {
+    c.font = `600 22px ${FF}`;
+    c.fillStyle = '#e8e8e8';
+    c.textAlign = 'center';
+    c.textBaseline = 'alphabetic';
+    c.fillText(state.title, w / 2, 40);
+  }
+
+  // Grid + Y axis tick labels
+  c.font = `400 ${af}px ${FF}`;
+  c.textBaseline = 'middle';
+  scale.ticks.forEach(t => {
+    const ty = y(t);
+    if (state.showGrid && t !== 0) {
+      c.strokeStyle = '#262626';
+      c.lineWidth = 1;
+      c.beginPath(); c.moveTo(plotLeft, ty); c.lineTo(plotRight, ty); c.stroke();
+    }
+    c.fillStyle = '#777';
+    c.textAlign = 'right';
+    c.fillText(fmtNum(t), plotLeft - 10, ty);
+  });
+
+  // Zero baseline (emphasized — the bridge sits on it)
+  const zeroY = y(0);
+  c.strokeStyle = '#3a3a3a';
+  c.lineWidth = 1.5;
+  c.beginPath(); c.moveTo(plotLeft, zeroY); c.lineTo(plotRight, zeroY); c.stroke();
+
+  // X labels below the plot (wrapped, centered per slot)
+  c.font = `500 ${af}px ${FF}`;
+  c.fillStyle = '#aaa';
+  c.textAlign = 'center';
+  c.textBaseline = 'top';
+  comps.forEach((cp, i) => {
+    const cx = plotLeft + slotW * (i + 0.5);
+    wrappedLabels[i].forEach((line, li) => {
+      c.fillText(line, cx, plotBottom + 10 + li * lineHeight);
+    });
+  });
+
+  // Bars + connectors + value labels
+  const barW = slotW * state.barWidth;
+  comps.forEach((cp, i) => {
+    const center = plotLeft + slotW * (i + 0.5);
+    const x = center - barW / 2;
+    const topPx = y(Math.max(cp.y0, cp.y1));
+    const hPx = Math.max(Math.abs(y(cp.y0) - y(cp.y1)), 1);
+    c.fillStyle = effColor(cp);
+    c.fillRect(x, topPx, barW, hPx);
+
+    // Dashed connector from this bar's running level to the next bar's edge.
+    if (state.showConnectors && i < comps.length - 1) {
+      const cy = y(cp.y1);
+      c.strokeStyle = '#666';
+      c.lineWidth = 1;
+      c.setLineDash([4, 3]);
+      c.beginPath();
+      c.moveTo(x + barW, cy);
+      c.lineTo(center + slotW - barW / 2, cy);
+      c.stroke();
+      c.setLineDash([]);
+    }
+
+    if (state.showValues) {
+      const up = cp.y1 >= cp.y0;
+      const pillH = state.valueFontSize + 6;
+      // drawValueLabel places the pill's bottom edge at bottomY: above the top
+      // edge for upward bars, under the bottom edge for downward ones — clamped
+      // inside the plot either way.
+      const bottomY = up
+        ? Math.max(topPx - 3, plotTop + pillH)
+        : Math.min(topPx + hPx + pillH + 3, plotBottom - 2);
+      drawValueLabel(c, labelText(cp), center, bottomY, effColor(cp), state.valueFontSize);
+    }
+  });
+}
+
+function renderPreview() {
+  render(ctx, CANVAS_W, CANVAS_H, true);
+  persist();
+}
+
+// ── Persistence ───────────────────────────────────────────────────────────────
+const STORAGE_KEY = 'waterfall-builder-v1';
+
+// Full, portable snapshot of the chart: data + visual configuration. Shared by
+// localStorage persistence and JSON export so the two never drift. Bar ids are
+// internal-only and omitted (import/restore reassign them).
+function getConfig() {
+  return {
+    title: state.title,
+    showTitle: state.showTitle,
+    bars: state.bars.map(({ label, type, value, color }) =>
+      ({ label, type, value, color: color || null })),
+    colors: { ...state.colors },
+    showConnectors: state.showConnectors,
+    showValues: state.showValues,
+    valuePrefix: state.valuePrefix,
+    valueSuffix: state.valueSuffix,
+    showGrid: state.showGrid,
+    aspect: state.aspect,
+    bgColor: state.bgColor,
+    barWidth: state.barWidth,
+    axisFontSize: state.axisFontSize,
+    valueFontSize: state.valueFontSize,
+  };
+}
+
+function persist() {
+  saveState(STORAGE_KEY, getConfig());
+}
+
+// Validate raw bar objects (from storage or import) into clean state bars.
+function sanitizeBars(raw) {
+  nextId = 1;
+  return raw.map((b, i) => {
+    const num = Number(b?.value);
+    return {
+      id: nextId++,
+      label: b?.label != null ? String(b.label) : 'Bar ' + (i + 1),
+      type: BAR_TYPES.includes(b?.type) ? b.type : 'delta',
+      value: b?.value !== null && b?.value !== '' && isFinite(num) ? num : null,
+      color: isHex6(b?.color) ? b.color : null,
+    };
+  });
+}
+
+function restore() {
+  const data = loadState(STORAGE_KEY);
+  if (!data || !Array.isArray(data.bars) || !data.bars.length) return false;
+
+  state.bars      = sanitizeBars(data.bars);
+  state.title     = data.title     ?? state.title;
+  state.showTitle = data.showTitle ?? true;
+  if (data.colors)
+    for (const k of ['pos', 'neg', 'total'])
+      if (isHex6(data.colors[k])) state.colors[k] = data.colors[k];
+  state.showConnectors = data.showConnectors ?? true;
+  state.showValues     = data.showValues     ?? true;
+  state.valuePrefix    = data.valuePrefix    ?? '';
+  state.valueSuffix    = data.valueSuffix    ?? '';
+  state.showGrid       = data.showGrid       ?? true;
+  state.aspect         = ASPECTS[data.aspect] ? data.aspect : '16:9';
+  state.bgColor        = isHex6(data.bgColor) ? data.bgColor : state.bgColor;
+  state.barWidth       = data.barWidth       ?? state.barWidth;
+  state.axisFontSize   = data.axisFontSize   ?? state.axisFontSize;
+  state.valueFontSize  = data.valueFontSize  ?? state.valueFontSize;
+  return true;
+}
+
+// ── UI: Bar cards ─────────────────────────────────────────────────────────────
+
+// Refresh computed subtotal fields and effective swatch colors in place — no
+// DOM rebuild, so value-input focus is preserved while typing.
+function refreshComputed() {
+  computeBars().forEach(comp => {
+    if (comp.bar.type === 'subtotal') {
+      const inp = document.querySelector(`input.bar-value[data-bar-id="${comp.bar.id}"]`);
+      if (inp) inp.value = Math.round(comp.y1 * 100) / 100;
+    }
+    const sw = document.querySelector(`.color-swatch[data-bar-id="${comp.bar.id}"]`);
+    if (sw) sw.style.background = effColor(comp);
+  });
+}
+
+function renderBars() {
+  const list = document.getElementById('bars-list');
+  list.innerHTML = '';
+  const comps = computeBars();
+
+  state.bars.forEach((bar, idx) => {
+    const comp = comps[idx];
+    const card = document.createElement('div');
+    card.className = 'series-card';
+
+    const top = document.createElement('div');
+    top.className = 'series-card-top';
+    top.style.gridTemplateColumns = '28px 1fr 28px 28px';
+
+    const swatch = colorSwatch(effColor(comp), hex => { bar.color = hex; renderPreview(); });
+    swatch.dataset.barId = bar.id;
+
+    const labelIn = document.createElement('input');
+    labelIn.type = 'text';
+    labelIn.value = bar.label;
+    labelIn.placeholder = 'Label';
+    labelIn.addEventListener('input', e => { bar.label = e.target.value; renderPreview(); });
+
+    const autoBtn = document.createElement('button');
+    autoBtn.className = 'btn-icon';
+    autoBtn.textContent = '↺';
+    autoBtn.title = 'Reset color to automatic (by type/sign)';
+    autoBtn.addEventListener('click', () => { bar.color = null; refreshComputed(); renderPreview(); });
+
+    const del = document.createElement('button');
+    del.className = 'btn-icon delete';
+    del.innerHTML = '×';
+    del.title = 'Remove';
+    del.addEventListener('click', () => {
+      if (state.bars.length <= 1) return;
+      state.bars.splice(idx, 1);
+      renderBars();
+      renderPreview();
+    });
+
+    top.append(swatch, labelIn, autoBtn, del);
+
+    const controls = document.createElement('div');
+    controls.className = 'bar-card-controls';
+
+    const typeToggle = makeSegToggle(
+      [{ label: '+/−', value: 'delta' },
+       { label: 'Sub', value: 'subtotal' },
+       { label: 'Total', value: 'total' }],
+      bar.type, false,
+      v => {
+        bar.type = v;
+        if (v === 'subtotal') bar.value = null;   // computed from the running total
+        renderBars();
+        renderPreview();
+      }
+    );
+
+    const valIn = document.createElement('input');
+    valIn.type = 'number';
+    valIn.className = 'bar-value';
+    valIn.dataset.barId = bar.id;
+    if (bar.type === 'subtotal') {
+      valIn.value = Math.round(comp.y1 * 100) / 100;
+      valIn.readOnly = true;
+      valIn.classList.add('pct-auto');
+      valIn.title = 'Running total (computed)';
+    } else {
+      valIn.value = bar.value ?? '';
+      valIn.placeholder = 'Value';
+      valIn.addEventListener('input', e => {
+        bar.value = e.target.value === '' ? null : parseFloat(e.target.value);
+        refreshComputed();
+        renderPreview();
+      });
+    }
+
+    const moveBtn = (txt, delta) => {
+      const b = document.createElement('button');
+      b.className = 'btn-icon';
+      b.textContent = txt;
+      b.title = delta < 0 ? 'Move up' : 'Move down';
+      const j = idx + delta;
+      b.disabled = j < 0 || j >= state.bars.length;
+      b.addEventListener('click', () => {
+        [state.bars[idx], state.bars[j]] = [state.bars[j], state.bars[idx]];
+        renderBars();
+        renderPreview();
+      });
+      return b;
+    };
+
+    controls.append(typeToggle, valIn, moveBtn('▲', -1), moveBtn('▼', 1));
+    card.append(top, controls);
+    list.appendChild(card);
+  });
+}
+
+document.getElementById('add-bar').addEventListener('click', () => {
+  state.bars.push(mkBar('New bar', 'delta', 10));
+  renderBars();
+  renderPreview();
+});
+
+// ── Role colors ───────────────────────────────────────────────────────────────
+function buildRoleColors() {
+  const spots = [['posColor', 'pos'], ['negColor', 'neg'], ['totalColor', 'total']];
+  for (const [elId, key] of spots) {
+    const host = document.getElementById(elId);
+    host.innerHTML = '';
+    host.appendChild(colorSwatch(state.colors[key], hex => {
+      state.colors[key] = hex;
+      refreshComputed();   // card swatches show effective colors
+      renderPreview();
+    }));
+  }
+}
+
+// ── Toggles / inputs ──────────────────────────────────────────────────────────
+const bindToggle = (id, key) => bindStateToggle(id, state, key, renderPreview);
+bindToggle('toggleTitle',      'showTitle');
+bindToggle('toggleConnectors', 'showConnectors');
+bindToggle('toggleGrid',       'showGrid');
+bindToggle('toggleValues',     'showValues');
+
+document.getElementById('chartTitle').addEventListener('input', e => {
+  state.title = e.target.value;
+  renderPreview();
+});
+document.getElementById('valuePrefix').addEventListener('input', e => {
+  state.valuePrefix = e.target.value;
+  renderPreview();
+});
+document.getElementById('valueSuffix').addEventListener('input', e => {
+  state.valueSuffix = e.target.value;
+  renderPreview();
+});
+
+// Aspect-ratio selector — resizes the canvas to the chosen ratio.
+function buildAspect() {
+  const host = document.getElementById('aspectCtl');
+  host.innerHTML = '';
+  host.appendChild(makeSegToggle(
+    Object.keys(ASPECTS).map(r => ({ label: r, value: r })),
+    state.aspect, false,
+    v => { setAspect(v); buildAspect(); },
+  ));
+}
+
+// ── Display sliders ───────────────────────────────────────────────────────────
+function buildSliders() {
+  const host = document.getElementById('display-sliders');
+  host.innerHTML = '';
+  host.append(
+    sliderRow('Bar width', {
+      min: 0.2, max: 0.9, step: 0.05, value: state.barWidth,
+      fmt: v => Math.round(v * 100) + '%',
+      onInput: v => { state.barWidth = v; renderPreview(); },
+    }),
+    sliderRow('Axis text size', {
+      min: 8, max: 28, step: 1, value: state.axisFontSize,
+      fmt: v => v, onInput: v => { state.axisFontSize = v; renderPreview(); },
+    }),
+    sliderRow('Value text size', {
+      min: 8, max: 24, step: 1, value: state.valueFontSize,
+      fmt: v => v, onInput: v => { state.valueFontSize = v; renderPreview(); },
+    }),
+  );
+}
+
+// ── Background ────────────────────────────────────────────────────────────────
+const applyBgColor = bindBgControl(state, renderPreview);
+
+// ── Export ────────────────────────────────────────────────────────────────────
+function exportChart(withBg) {
+  exportPNG({
+    render, w: CANVAS_W, h: CANVAS_H, withBg,
+    filename: withBg ? 'waterfall.png' : 'waterfall-transparent.png',
+  });
+}
+
+function exportJSON() {
+  downloadText('waterfall.json', JSON.stringify(getConfig(), null, 2));
+}
+
+// ── Import (paste JSON) ───────────────────────────────────────────────────────
+// Accepts a minimal data shape ({ "bars": [{ label, type, value }] }) or a full
+// config as produced by Export JSON. Subtotal values are always recomputed.
+function applyImportData(data) {
+  const rawBars = Array.isArray(data?.bars) ? data.bars : null;
+  if (!rawBars || !rawBars.length)
+    return { ok: false, msg: 'Need a non-empty "bars" array.' };
+  if (!rawBars.every(b => b && b.label != null))
+    return { ok: false, msg: 'Each bar needs a "label".' };
+
+  state.bars = sanitizeBars(rawBars);
+
+  // Optional visual configuration — applied only when present and valid.
+  const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+  if (data.title != null)                   state.title     = String(data.title);
+  if (typeof data.showTitle === 'boolean')  state.showTitle = data.showTitle;
+  if (data.colors)
+    for (const k of ['pos', 'neg', 'total'])
+      if (isHex6(data.colors[k])) state.colors[k] = data.colors[k];
+  for (const key of ['showConnectors', 'showValues', 'showGrid'])
+    if (typeof data[key] === 'boolean') state[key] = data[key];
+  if (data.valuePrefix != null) state.valuePrefix = String(data.valuePrefix);
+  if (data.valueSuffix != null) state.valueSuffix = String(data.valueSuffix);
+  if (ASPECTS[data.aspect]) state.aspect = data.aspect;
+  if (isHex6(data.bgColor)) state.bgColor = data.bgColor;
+  if (Number.isFinite(data.barWidth))      state.barWidth      = clamp(data.barWidth, 0.2, 0.9);
+  if (Number.isFinite(data.axisFontSize))  state.axisFontSize  = clamp(data.axisFontSize, 8, 28);
+  if (Number.isFinite(data.valueFontSize)) state.valueFontSize = clamp(data.valueFontSize, 8, 24);
+
+  renderBars();
+  syncControls();
+  setAspect(state.aspect);   // resize canvas to imported ratio, then repaint
+  return { ok: true, msg: 'Imported ' + state.bars.length + ' bars.' };
+}
+
+initImportPanel(applyImportData);
+
+// Push the current state into every panel control (inputs, toggles, sliders,
+// selectors, background). Shared by import and initial load so they can't drift.
+function syncControls() {
+  document.getElementById('chartTitle').value  = state.title;
+  document.getElementById('valuePrefix').value = state.valuePrefix;
+  document.getElementById('valueSuffix').value = state.valueSuffix;
+  syncToggleBtn('toggleTitle',      state.showTitle);
+  syncToggleBtn('toggleConnectors', state.showConnectors);
+  syncToggleBtn('toggleGrid',       state.showGrid);
+  syncToggleBtn('toggleValues',     state.showValues);
+  applyBgColor(state.bgColor);
+  buildRoleColors();
+  buildSliders();
+  buildAspect();
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+restore();
+renderBars();
+syncControls();
+setAspect(state.aspect);   // size the canvas to the restored ratio and paint
+</script>
+</body>
+</html>

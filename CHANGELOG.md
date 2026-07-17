@@ -1,5 +1,18 @@
 # Changelog
 
+## [2026-07-17] — Waterfall chart builder
+
+### Added
+- **Waterfall builder** (`waterfall.html`) — think-cell-style bridge chart: each bar is a **delta** (floats on the running total, sign-colored), a **subtotal** (computed from the running total, read-only), or a **total** (restarts the running total)
+  - Dashed connectors between bars at the running level; values crossing zero render naturally on a signed "nice" axis with an emphasized zero baseline
+  - Signed value labels (`+30` / `−12`) with optional prefix/suffix, placed above upward and below downward bars
+  - Role colors (increase / decrease / totals) plus per-bar overrides with reset-to-auto; ▲/▼ reordering; aspect-ratio, grid, title, and slider controls
+  - Full persistence (`waterfall-builder-v1`), PNG export (background / transparent), and JSON export/import (minimal `{ "bars": [...] }` or full config)
+- `niceScale()` in `shared.js` — signed nice-axis scale (zero always included) reused by upcoming stacked-combo and scatter work
+- Launcher card on the home page and a Waterfall tab on all builders (via the shared `CHARTS` list)
+
+---
+
 ## [2026-07-17] — Shared engine groundwork + donut JSON import/export
 
 ### Added

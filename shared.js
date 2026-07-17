@@ -248,6 +248,22 @@ function niceMax(raw) {
   return nice * base;
 }
 
+// Compute a "nice" signed axis scale spanning [min, max]. Zero is always
+// included and the bounds land on step multiples, so charts with negative
+// values (waterfall, scatter) get clean ticks on both sides of the baseline.
+// Returns { min, max, step, ticks: [lo, …, hi] }.
+function niceScale(min, max, tickCount = 5) {
+  min = Math.min(0, min);
+  max = Math.max(0, max);
+  if (min === 0 && max === 0) max = 10;   // degenerate: nothing to scale
+  const step = niceMax((max - min) / tickCount);
+  const lo = Math.floor(min / step) * step;
+  const hi = Math.ceil(max / step) * step;
+  const n = Math.round((hi - lo) / step);
+  const ticks = Array.from({ length: n + 1 }, (_, i) => lo + i * step);
+  return { min: lo, max: hi, step, ticks };
+}
+
 // ── Canvas drawing helpers ──────────────────────────────────────────────────
 
 // Draw a value label as a rounded "pill" tinted with `color`, centered on `cx`
@@ -311,8 +327,9 @@ function wrapLabel(c, text, maxW, maxLines = 3) {
 // launcher card in index.html; every page's <nav class="chart-tabs"> is built
 // from this list with the current page marked active.
 const CHARTS = [
-  { href: 'donut.html', label: 'Donut' },
-  { href: 'combo.html', label: 'Combo' },
+  { href: 'donut.html',     label: 'Donut' },
+  { href: 'combo.html',     label: 'Combo' },
+  { href: 'waterfall.html', label: 'Waterfall' },
 ];
 
 function initChartTabs() {
