@@ -1,5 +1,18 @@
 # Changelog
 
+## [2026-07-17] — Annotations: CAGR/diff arrows and value lines
+
+### Added
+- **Growth / diff arrows** on combo and waterfall — think-cell-style arrows between two categories/bars with dashed risers and an auto-computed pill: **CAGR** (`+5.3% p.a.`), absolute **Δ**, or **%Δ**; undefined cases (e.g. CAGR over nonpositive values) render as `n/a`
+  - Combo arrows can measure any series or the stack total (stacked modes) / first bar series (grouped); anchors follow stack tops in stacked and 100% modes
+  - Waterfall arrows measure running levels — e.g. start total → end subtotal shows the whole bridge move
+- **Value lines** — dashed horizontal reference lines (target/benchmark) with a label + value pill; combo lines can bind to the left or right axis
+- **Drag on the chart** — grab an arrow pill to raise/lower the arrow, or a value-line pill to slide the line to a new value (snapped to a fraction of the axis step); the panel input tracks live
+- Annotation cards in the side panel (metric/from/to/series pickers, value/label/axis, colors, delete); shared canvas primitives `drawArrow`, `drawValueLine`, `computeCAGR` in `shared.js`
+- Annotations persist and round-trip through JSON export/import on both builders; older saves and imports without annotations load clean
+
+---
+
 ## [2026-07-17] — Combo: stacked & 100% stacked bars, totals, segment labels
 
 ### Added

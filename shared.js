@@ -286,6 +286,50 @@ function drawValueLabel(c, text, cx, bottomY, color, fontSize) {
   c.fillText(text, cx, y + h / 2);
 }
 
+// Straight line with filled triangular arrowheads. heads: 'end' | 'both' | 'none'.
+function drawArrow(c, x1, y1, x2, y2, { color = '#f0f0f0', width = 1.5, heads = 'end', dash = null } = {}) {
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  const headLen = 4 + width * 2.5;
+  c.strokeStyle = color;
+  c.lineWidth = width;
+  if (dash) c.setLineDash(dash);
+  c.beginPath();
+  c.moveTo(x1, y1);
+  c.lineTo(x2, y2);
+  c.stroke();
+  if (dash) c.setLineDash([]);
+  const head = (x, y, a) => {
+    c.beginPath();
+    c.moveTo(x, y);
+    c.lineTo(x - headLen * Math.cos(a - 0.4), y - headLen * Math.sin(a - 0.4));
+    c.lineTo(x - headLen * Math.cos(a + 0.4), y - headLen * Math.sin(a + 0.4));
+    c.closePath();
+    c.fillStyle = color;
+    c.fill();
+  };
+  if (heads === 'end' || heads === 'both') head(x2, y2, angle);
+  if (heads === 'both') head(x1, y1, angle + Math.PI);
+}
+
+// Dashed horizontal reference line (average / target / benchmark).
+function drawValueLine(c, x1, x2, y, { color = '#E84545', width = 1.5, dash = [6, 4] } = {}) {
+  c.strokeStyle = color;
+  c.lineWidth = width;
+  if (dash) c.setLineDash(dash);
+  c.beginPath();
+  c.moveTo(x1, y);
+  c.lineTo(x2, y);
+  c.stroke();
+  c.setLineDash([]);
+}
+
+// Compound annual growth rate from v0 to v1 over `periods` periods.
+// Returns null when undefined (nonpositive endpoints or zero periods).
+function computeCAGR(v0, v1, periods) {
+  if (!(v0 > 0) || !(v1 > 0) || !(periods > 0)) return null;
+  return Math.pow(v1 / v0, 1 / periods) - 1;
+}
+
 // Break `text` into lines that each fit within `maxW` px under the current
 // c.font. Wraps on spaces; hard-breaks any single word wider than maxW. Caps at
 // `maxLines` lines, appending an ellipsis if content remains. Always returns ≥1 line.

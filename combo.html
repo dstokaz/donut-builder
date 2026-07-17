@@ -81,6 +81,13 @@
     </div>
 
     <div class="section">
+      <div class="panel-title">Annotations</div>
+      <div id="ann-list"></div>
+      <button id="add-arrow" class="btn-add">+ Growth / diff arrow</button>
+      <button id="add-line" class="btn-add">+ Value line</button>
+    </div>
+
+    <div class="section">
       <div class="panel-title">Background</div>
       <div class="bg-row">
         <div class="bg-swatch" id="bgSwatch">
@@ -158,6 +165,7 @@ const state = {
   barMode: 'grouped',   // 'grouped' | 'stacked' | 'stacked100'
   showStackTotals: false,     // total label above each stack (stacked modes)
   segmentLabelMode: 'value',  // 'value' | 'percent' — per-segment labels in stacked modes
+  annotations: [],      // CAGR/diff arrows + value lines, see sanitizeAnn()
   lineWidth: 3,         // px
   axisFontSize: 14,     // px
   valueFontSize: 11,    // px
@@ -214,6 +222,13 @@ let ctx      = setupCanvas(canvas, CANVAS_W, CANVAS_H);
 // and the bar currently being recolored via the popover (null = none).
 let barHits = [];
 let selectedBar = null;   // { seriesId, ci }
+
+// Annotation pill rects from the last preview render (for drag hit-testing),
+// the annotation drag in flight, and the last preview's plot metrics (so drag
+// handlers can map pixels back to axis values outside render()).
+let annHits = [];
+let annDrag = null;
+let plotMetrics = null;
 
 // Switch aspect ratio: resize the canvas backing store and repaint.
 function setAspect(a) {
@@ -508,6 +523,112 @@ function render(c, w, h, withBg) {
                        p.x, p.y - state.lineWidth * 1.4 - 3, s.color, state.valueFontSize);
     });
   });
+
+  // ── Annotations (CAGR/diff arrows + value lines) — drawn on top ────────────
+  if (c === ctx) {
+    annHits = [];
+    plotMetrics = { plotTop, plotBottom, plotH, leftMax, rightMax };
+  }
+  const xForCi = ci => plotLeft + slotW * (ci + 0.5);
+  const axisMaxOf = axis => (axis === 'right' && hasRight) ? rightMax : leftMax;
+  const yOf = (v, axisMax) => plotBottom - Math.min(Math.max(v / (axisMax || 1), 0), 1) * plotH;
+
+  // Positive-stack running sums at a category, keyed by series id.
+  const stackInfo = ci => {
+    let sum = 0;
+    const cums = new Map();
+    for (const s of barSeries) {
+      const v = Number(s.values[ci]);
+      if (isFinite(v) && v > 0) sum += v;
+      cums.set(s.id, sum);
+    }
+    return { sum, cums };
+  };
+
+  // Value + pixel anchor for an arrow endpoint at category ci. seriesId null =
+  // stack total (stacked) or the first bar series (grouped).
+  const arrowAnchor = (ann, ci) => {
+    if (!Number.isFinite(ci) || ci < 0 || ci >= cats.length) return null;
+    if (ann.seriesId == null) {
+      if (stacked) {
+        const { sum } = stackInfo(ci);
+        if (sum <= 0) return null;
+        return { value: sum, y: yOf(pct100 ? 100 : sum, leftMax) };
+      }
+      const s0 = barSeries[0] || state.series[0];
+      if (!s0) return null;
+      const v = Number(s0.values[ci]);
+      if (!isFinite(v)) return null;
+      return { value: v, y: yOf(v, axisMaxOf(effAxis(s0))) };
+    }
+    const s = state.series.find(sr => sr.id === ann.seriesId);
+    if (!s) return null;
+    const v = Number(s.values[ci]);
+    if (!isFinite(v)) return null;
+    if (s.kind === 'bar' && stacked) {
+      const { sum, cums } = stackInfo(ci);
+      if (sum <= 0 || !(v > 0)) return null;
+      const cum = cums.get(s.id) ?? 0;
+      return { value: v, y: yOf(pct100 ? cum / sum * 100 : cum, leftMax) };
+    }
+    return { value: v, y: yOf(v, axisMaxOf(effAxis(s))) };
+  };
+
+  state.annotations.forEach(ann => {
+    if (ann.type === 'line') {
+      const v = Number(ann.value);
+      if (!isFinite(v)) return;
+      const ly = yOf(v, axisMaxOf(ann.axis));
+      drawValueLine(c, plotLeft, plotRight, ly, { color: ann.color });
+      const txt = [ann.label, ann.showValue ? fmtNum(v) : ''].filter(Boolean).join(' ');
+      if (txt) {
+        c.font = `600 ${state.valueFontSize}px ${FF}`;
+        const pw = c.measureText(txt).width + 12;
+        const ph = state.valueFontSize + 6;
+        const cx = plotRight - pw / 2 - 6;
+        const bottomY = Math.max(ly - 4, plotTop + ph);
+        drawValueLabel(c, txt, cx, bottomY, ann.color, state.valueFontSize);
+        if (c === ctx) annHits.push({ x: cx - pw / 2, y: bottomY - ph, w: pw, h: ph, annId: ann.id });
+      } else if (c === ctx) {
+        annHits.push({ x: plotRight - 46, y: ly - 8, w: 40, h: 16, annId: ann.id });
+      }
+    } else {
+      const a = arrowAnchor(ann, ann.fromCi);
+      const b = arrowAnchor(ann, ann.toCi);
+      if (!a || !b || ann.fromCi === ann.toCi) return;
+      const x1 = xForCi(ann.fromCi), x2 = xForCi(ann.toCi);
+      const level = Math.max(Math.min(a.y, b.y) - (ann.yOffset ?? 28), plotTop + 10);
+
+      // Dashed risers from each endpoint up to the arrow level.
+      c.strokeStyle = ann.color;
+      c.lineWidth = 1;
+      c.setLineDash([3, 3]);
+      c.beginPath(); c.moveTo(x1, a.y - 4); c.lineTo(x1, level); c.stroke();
+      c.beginPath(); c.moveTo(x2, b.y - 4); c.lineTo(x2, level); c.stroke();
+      c.setLineDash([]);
+      drawArrow(c, x1, level, x2, level, { color: ann.color, width: 1.5, heads: 'end' });
+
+      let txt = 'n/a';
+      if (ann.metric === 'cagr') {
+        const g = computeCAGR(a.value, b.value, Math.abs(ann.toCi - ann.fromCi));
+        if (g != null) txt = (g >= 0 ? '+' : '−') + (Math.abs(g) * 100).toFixed(1) + '% p.a.';
+      } else if (ann.metric === 'diff') {
+        const d = b.value - a.value;
+        txt = (d >= 0 ? '+' : '−') + fmtNum(Math.abs(d));
+      } else if (a.value !== 0) {
+        const p = (b.value - a.value) / Math.abs(a.value) * 100;
+        txt = (p >= 0 ? '+' : '−') + Math.abs(p).toFixed(1) + '%';
+      }
+      const mx = (x1 + x2) / 2;
+      drawValueLabel(c, txt, mx, level - 4, ann.color, state.valueFontSize);
+      if (c === ctx) {
+        c.font = `600 ${state.valueFontSize}px ${FF}`;
+        const pw = c.measureText(txt).width + 12;
+        const ph = state.valueFontSize + 6;
+        annHits.push({ x: mx - pw / 2, y: level - 4 - ph, w: pw, h: ph, annId: ann.id });
+      }
+    }
+  });
 }
 
 function renderPreview() {
@@ -517,6 +638,43 @@ function renderPreview() {
 
 // ── Persistence ───────────────────────────────────────────────────────────────
 const STORAGE_KEY = 'combo-builder-v1';
+
+// Validate a raw annotation (from storage, import, or an add button) into a
+// clean state annotation, or null if hopeless. Serialized arrows carry a
+// seriesIndex (position) because series ids are internal and reassigned; this
+// resolves it back to the live series id. Must run after state.series is set.
+function sanitizeAnn(a) {
+  if (!a || (a.type !== 'arrow' && a.type !== 'line')) return null;
+  if (a.type === 'arrow') {
+    const maxCi = Math.max(state.categories.length - 1, 0);
+    const clampCi = (v, dflt) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? Math.min(Math.max(Math.round(n), 0), maxCi) : dflt;
+    };
+    const bySeriesIndex = Number.isFinite(Number(a.seriesIndex)) ? state.series[Number(a.seriesIndex)] : null;
+    return {
+      id: nextId++,
+      type: 'arrow',
+      metric: ['cagr', 'diff', 'pctdiff'].includes(a.metric) ? a.metric : 'cagr',
+      fromCi: clampCi(a.fromCi, 0),
+      toCi: clampCi(a.toCi, maxCi),
+      seriesId: a.seriesId != null && state.series.some(s => s.id === a.seriesId)
+        ? a.seriesId
+        : (bySeriesIndex ? bySeriesIndex.id : null),
+      yOffset: Number.isFinite(a.yOffset) ? Math.min(Math.max(a.yOffset, 8), 600) : 28,
+      color: isHex6(a.color) ? a.color : '#f0f0f0',
+    };
+  }
+  return {
+    id: nextId++,
+    type: 'line',
+    value: Number.isFinite(Number(a.value)) ? Number(a.value) : 0,
+    axis: a.axis === 'right' ? 'right' : 'left',
+    label: a.label != null ? String(a.label) : '',
+    color: isHex6(a.color) ? a.color : '#E84545',
+    showValue: a.showValue !== false,
+  };
+}
 
 // Full, portable snapshot of the chart: data + visual configuration. Shared by
 // localStorage persistence and JSON export so the two never drift. Series ids are
@@ -540,6 +698,12 @@ function getConfig() {
     barMode: state.barMode,
     showStackTotals: state.showStackTotals,
     segmentLabelMode: state.segmentLabelMode,
+    annotations: state.annotations.map(a => a.type === 'arrow'
+      ? { type: 'arrow', metric: a.metric, fromCi: a.fromCi, toCi: a.toCi,
+          seriesIndex: (i => i >= 0 ? i : null)(state.series.findIndex(s => s.id === a.seriesId)),
+          yOffset: a.yOffset, color: a.color }
+      : { type: 'line', value: a.value, axis: a.axis, label: a.label,
+          color: a.color, showValue: a.showValue }),
     lineWidth: state.lineWidth,
     axisFontSize: state.axisFontSize,
     valueFontSize: state.valueFontSize,
@@ -591,6 +755,11 @@ function restore() {
   // Keep every series' value array aligned to the category count
   state.series.forEach(s => alignValues(s));
   nextId = Math.max(0, ...state.series.map(s => s.id)) + 1;
+
+  // Migration: saves from before annotations simply lack the key.
+  state.annotations = Array.isArray(data.annotations)
+    ? data.annotations.map(sanitizeAnn).filter(Boolean)
+    : [];
   return true;
 }
 
@@ -799,7 +968,155 @@ function renderMatrix() {
   });
   table.appendChild(tbody);
   host.appendChild(table);
+
+  // The annotation cards embed category/series pickers — rebuild them whenever
+  // the data shape changes (renderMatrix runs on every such change).
+  renderAnnotations();
 }
+
+// ── UI: Annotation cards ──────────────────────────────────────────────────────
+// Refresh line-value inputs in place during canvas drags (no rebuild, so an
+// input being edited keeps focus).
+function refreshAnnInputs() {
+  state.annotations.forEach(a => {
+    if (a.type !== 'line') return;
+    const inp = document.querySelector(`input.ann-value[data-ann-id="${a.id}"]`);
+    if (inp && document.activeElement !== inp) inp.value = a.value;
+  });
+}
+
+function renderAnnotations() {
+  const list = document.getElementById('ann-list');
+  if (!list) return;
+  list.innerHTML = '';
+
+  state.annotations.forEach((ann, idx) => {
+    const card = document.createElement('div');
+    card.className = 'series-card';
+    const top = document.createElement('div');
+    top.className = 'series-card-top';
+
+    const swatch = colorSwatch(ann.color, hex => { ann.color = hex; renderPreview(); });
+
+    const del = document.createElement('button');
+    del.className = 'btn-icon delete';
+    del.innerHTML = '×';
+    del.title = 'Remove';
+    del.addEventListener('click', () => {
+      state.annotations.splice(idx, 1);
+      renderAnnotations();
+      renderPreview();
+    });
+
+    if (ann.type === 'arrow') {
+      const metric = makeSegToggle(
+        [{ label: 'CAGR', value: 'cagr' },
+         { label: 'Δ', value: 'diff' },
+         { label: '%Δ', value: 'pctdiff' }],
+        ann.metric, false,
+        v => { ann.metric = v; renderAnnotations(); renderPreview(); });
+      top.append(swatch, metric, del);
+
+      const row = document.createElement('div');
+      row.style.display = 'grid';
+      row.style.gridTemplateColumns = '1fr 1fr 1fr';
+      row.style.gap = '6px';
+
+      const catSel = (val, title, onCh) => {
+        const sel = document.createElement('select');
+        sel.title = title;
+        state.categories.forEach((cat, ci) => {
+          const o = document.createElement('option');
+          o.value = ci;
+          o.textContent = cat || ('#' + (ci + 1));
+          if (ci === val) o.selected = true;
+          sel.appendChild(o);
+        });
+        sel.addEventListener('change', e => { onCh(parseInt(e.target.value, 10)); renderPreview(); });
+        return sel;
+      };
+
+      const serSel = document.createElement('select');
+      serSel.title = 'Series the arrow measures';
+      const optAuto = document.createElement('option');
+      optAuto.value = '';
+      optAuto.textContent = state.barMode !== 'grouped' ? 'Stack total' : 'First bars';
+      serSel.appendChild(optAuto);
+      state.series.forEach(s => {
+        const o = document.createElement('option');
+        o.value = s.id;
+        o.textContent = s.name || 'Series';
+        if (ann.seriesId === s.id) o.selected = true;
+        serSel.appendChild(o);
+      });
+      serSel.addEventListener('change', e => {
+        ann.seriesId = e.target.value === '' ? null : parseInt(e.target.value, 10);
+        renderPreview();
+      });
+
+      row.append(catSel(ann.fromCi, 'From category', v => { ann.fromCi = v; }),
+                 catSel(ann.toCi, 'To category', v => { ann.toCi = v; }),
+                 serSel);
+      card.append(top, row);
+    } else {
+      top.style.gridTemplateColumns = '28px 64px 1fr 28px';
+
+      const valIn = document.createElement('input');
+      valIn.type = 'number';
+      valIn.className = 'ann-value';
+      valIn.dataset.annId = ann.id;
+      valIn.value = ann.value;
+      valIn.title = 'Line value (drag the pill on the chart too)';
+      valIn.addEventListener('input', e => {
+        ann.value = e.target.value === '' ? 0 : parseFloat(e.target.value);
+        renderPreview();
+      });
+
+      const labIn = document.createElement('input');
+      labIn.type = 'text';
+      labIn.value = ann.label;
+      labIn.placeholder = 'Label';
+      labIn.addEventListener('input', e => { ann.label = e.target.value; renderPreview(); });
+
+      top.append(swatch, valIn, labIn, del);
+
+      const row = document.createElement('div');
+      row.style.display = 'grid';
+      row.style.gridTemplateColumns = '1fr auto';
+      row.style.gap = '6px';
+      row.style.alignItems = 'center';
+
+      const axisT = makeSegToggle(
+        [{ label: 'Left', value: 'left' }, { label: 'Right', value: 'right' }],
+        ann.axis, !state.dualAxis,
+        v => { ann.axis = v; renderAnnotations(); renderPreview(); });
+
+      const showRow = document.createElement('div');
+      showRow.className = 'labels-right';
+      const lbl = document.createElement('span');
+      lbl.className = 'field-label';
+      lbl.textContent = 'Show value';
+      showRow.append(lbl, visToggle(ann.showValue, on => { ann.showValue = on; renderPreview(); }));
+
+      row.append(axisT, showRow);
+      card.append(top, row);
+    }
+    list.appendChild(card);
+  });
+}
+
+document.getElementById('add-arrow').addEventListener('click', () => {
+  state.annotations.push(sanitizeAnn({ type: 'arrow', fromCi: 0, toCi: state.categories.length - 1 }));
+  renderAnnotations();
+  renderPreview();
+});
+
+document.getElementById('add-line').addEventListener('click', () => {
+  const v = plotMetrics ? Math.round(plotMetrics.leftMax * 0.8) : 100;
+  state.annotations.push(sanitizeAnn({ type: 'line', value: v, label: 'Target' }));
+  renderAnnotations();
+  renderPreview();
+});
 
 // ── Toggles ─────────────────────────────────────────────────────────────────
 const bindToggle = (id, key, after) =>
@@ -816,7 +1133,7 @@ function buildBarMode() {
      { label: 'Stacked', value: 'stacked' },
      { label: '100%',    value: 'stacked100' }],
     state.barMode, false,
-    v => { state.barMode = v; buildBarMode(); buildSliders(); renderSeries(); renderPreview(); },
+    v => { state.barMode = v; buildBarMode(); buildSliders(); renderSeries(); renderAnnotations(); renderPreview(); },
   ));
   const stacked = state.barMode !== 'grouped';
   document.getElementById('stackTotalsRow').hidden = !stacked;
@@ -864,7 +1181,7 @@ function buildAspect() {
 bindToggle('toggleTitle',  'showTitle');
 bindToggle('toggleGrid',   'showGrid');
 bindToggle('toggleLegend', 'showLegend', buildLegendPos);
-bindToggle('toggleDual',   'dualAxis', renderSeries);  // re-enable/disable axis toggles
+bindToggle('toggleDual',   'dualAxis', () => { renderSeries(); renderAnnotations(); });  // re-enable/disable axis toggles
 bindToggle('toggleStackTotals', 'showStackTotals');
 
 document.getElementById('comboTitle').addEventListener('input', e => {
@@ -977,17 +1294,68 @@ function barHitAt(e) {
   return barHits.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) || null;
 }
 
+// Map a mouse event to render coordinates and find the annotation pill under it.
+function annHitAt(e) {
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  const x = (e.clientX - rect.left) * (CANVAS_W / rect.width);
+  const y = (e.clientY - rect.top)  * (CANVAS_H / rect.height);
+  return annHits.find(a => x >= a.x && x <= a.x + a.w && y >= a.y && y <= a.y + a.h) || null;
+}
+
+// Drag an annotation pill: arrows move their height (yOffset), value lines
+// track the axis value under the cursor.
+canvas.addEventListener('mousedown', e => {
+  const hit = annHitAt(e);
+  if (!hit) return;
+  const ann = state.annotations.find(a => a.id === hit.annId);
+  if (!ann) return;
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  annDrag = {
+    ann,
+    startY: (e.clientY - rect.top) * (CANVAS_H / rect.height),
+    orig: ann.type === 'arrow' ? (ann.yOffset ?? 28) : (Number(ann.value) || 0),
+  };
+});
+
+window.addEventListener('mousemove', e => {
+  if (!annDrag || !plotMetrics) return;
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.height) return;
+  const dy = (e.clientY - rect.top) * (CANVAS_H / rect.height) - annDrag.startY;
+  const { ann } = annDrag;
+  if (ann.type === 'arrow') {
+    ann.yOffset = Math.min(Math.max(annDrag.orig - dy, 8), 600);
+  } else {
+    const axisMax = (ann.axis === 'right' && state.dualAxis) ? plotMetrics.rightMax : plotMetrics.leftMax;
+    const raw = annDrag.orig - dy / plotMetrics.plotH * axisMax;
+    const step = (axisMax / TICKS) / 10 || 1;
+    ann.value = Math.round(Math.min(Math.max(raw, 0), axisMax) / step) * step;
+    ann.value = Math.round(ann.value * 100) / 100;
+    refreshAnnInputs();
+  }
+  renderPreview();
+});
+
+window.addEventListener('mouseup', () => { annDrag = null; });
+
 canvas.addEventListener('click', e => {
+  if (annHitAt(e)) return;   // annotation grabs win over the recolor popover
   const hit = barHitAt(e);
   if (hit) openBarPopover(hit, e.clientX, e.clientY);
   else closeBarPopover();
 });
 
 canvas.addEventListener('mousemove', e => {
-  // Pointer over bars; otherwise fall back to the zoom pan cursor ('grab' when
-  // zoomed in — shared.js only re-applies it on zoom changes, so restore it here).
+  if (annDrag) return;   // mid-drag: keep the drag cursor
+  // Pointer over annotations, then bars; otherwise fall back to the zoom pan
+  // cursor ('grab' when zoomed in — shared.js only re-applies it on zoom
+  // changes, so restore it here).
   const zoomed = /scale\(([\d.]+)\)/.exec(canvas.style.transform || '');
-  canvas.style.cursor = barHitAt(e) ? 'pointer' : (zoomed && parseFloat(zoomed[1]) > 1 ? 'grab' : '');
+  canvas.style.cursor = annHitAt(e) ? 'ns-resize'
+    : barHitAt(e) ? 'pointer'
+    : (zoomed && parseFloat(zoomed[1]) > 1 ? 'grab' : '');
 });
 
 // Dismiss on any press outside the popover. Presses on the canvas are left to
@@ -1084,6 +1452,9 @@ function applyImportData(data) {
   if (['grouped', 'stacked', 'stacked100'].includes(data.barMode)) state.barMode = data.barMode;
   if (typeof data.showStackTotals === 'boolean') state.showStackTotals = data.showStackTotals;
   if (['value', 'percent'].includes(data.segmentLabelMode)) state.segmentLabelMode = data.segmentLabelMode;
+  state.annotations = Array.isArray(data.annotations)
+    ? data.annotations.map(sanitizeAnn).filter(Boolean)
+    : [];
   if (Number.isFinite(data.lineWidth))      state.lineWidth      = clamp(data.lineWidth, 1, 8);
   if (Number.isFinite(data.axisFontSize))   state.axisFontSize   = clamp(data.axisFontSize, 8, 28);
   if (Number.isFinite(data.valueFontSize))  state.valueFontSize  = clamp(data.valueFontSize, 8, 24);
