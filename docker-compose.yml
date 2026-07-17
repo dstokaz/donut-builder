@@ -1,0 +1,15 @@
+# Managed by the local dev control plane: /Users/dmitriystokaz/Claude/local-dev
+# Static site (index.html, donut.html, combo.html) — served read-only by a stock
+# Caddy file server (no Dockerfile needed).
+# Start/stop with: dev start donut-builder / dev stop donut-builder
+name: donut-builder
+
+services:
+  donut-builder:
+    image: caddy:2
+    container_name: donut-builder
+    ports:
+      - "3007:80"
+    volumes:
+      - .:/srv:ro
+    command: ["caddy", "file-server", "--root", "/srv", "--listen", ":80", "--browse"]
