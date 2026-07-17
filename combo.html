@@ -49,6 +49,18 @@
 
     <div class="section">
       <div class="panel-title">Display</div>
+      <div class="field-stack">
+        <span class="field-label">Bar mode</span>
+        <div id="barModeCtl"></div>
+      </div>
+      <div class="toggle-row" id="stackTotalsRow">
+        <span class="field-label">Stack totals</span>
+        <button class="vis-toggle" id="toggleStackTotals" title="Show/hide">●</button>
+      </div>
+      <div class="field-stack" id="segLabelModeRow">
+        <span class="field-label">Segment labels</span>
+        <div id="segLabelModeCtl"></div>
+      </div>
       <div class="toggle-row">
         <span class="field-label">Grid lines</span>
         <button class="vis-toggle" id="toggleGrid" title="Show/hide">●</button>
@@ -143,6 +155,9 @@ const state = {
   bgColor: '#111111',
   barWidth: 0.7,        // fraction of a category slot used by the bar group
   barGap: 0.12,         // gap between adjacent bars in a group, as a fraction of one bar's width
+  barMode: 'grouped',   // 'grouped' | 'stacked' | 'stacked100'
+  showStackTotals: false,     // total label above each stack (stacked modes)
+  segmentLabelMode: 'value',  // 'value' | 'percent' — per-segment labels in stacked modes
   lineWidth: 3,         // px
   axisFontSize: 14,     // px
   valueFontSize: 11,    // px
@@ -155,16 +170,37 @@ state.series = [
 ];
 
 // Effective axis honoring the dual-axis toggle (single axis => everything left).
-function effAxis(s) { return state.dualAxis ? s.axis : 'left'; }
+// Stacked modes force every bar series onto the left axis — a stack needs one scale.
+function effAxis(s) {
+  if (s.kind === 'bar' && state.barMode !== 'grouped') return 'left';
+  return state.dualAxis ? s.axis : 'left';
+}
 
-function axisMaxFor(list) {
+function rawMaxFor(list) {
   let max = 0;
   for (const s of list)
     for (const v of s.values) {
       const n = Number(v);
       if (isFinite(n) && n > max) max = n;
     }
-  return niceMax(max);
+  return max;
+}
+
+function axisMaxFor(list) { return niceMax(rawMaxFor(list)); }
+
+// Tallest stack: max over categories of the positive bar-value sum.
+function stackSumMax() {
+  let max = 0;
+  state.categories.forEach((cat, ci) => {
+    let sum = 0;
+    for (const s of state.series)
+      if (s.kind === 'bar') {
+        const v = Number(s.values[ci]);
+        if (isFinite(v) && v > 0) sum += v;
+      }
+    if (sum > max) max = sum;
+  });
+  return max;
 }
 
 // ── Canvas Rendering ────────────────────────────────────────────────────────
@@ -195,11 +231,21 @@ function render(c, w, h, withBg) {
   const cats = state.categories;
   if (!cats.length || !state.series.length) return;
 
+  const barSeries = state.series.filter(s => s.kind === 'bar');
+  const stacked   = state.barMode !== 'grouped' && barSeries.length > 0;
+  const pct100    = state.barMode === 'stacked100' && barSeries.length > 0;
+
   const leftList  = state.series.filter(s => effAxis(s) === 'left');
   const rightList = state.series.filter(s => effAxis(s) === 'right');
   const hasRight  = state.dualAxis && rightList.length > 0;
 
-  const leftMax  = axisMaxFor(leftList);
+  // Stacked: the left scale must cover the tallest stack (per-category sum)
+  // alongside any left-axis line series. 100% mode pins the left scale to 100.
+  let leftMax;
+  if (pct100)       leftMax = 100;
+  else if (stacked) leftMax = niceMax(Math.max(stackSumMax(),
+                                               rawMaxFor(leftList.filter(s => s.kind === 'line'))));
+  else              leftMax = axisMaxFor(leftList);
   const rightMax = axisMaxFor(rightList);
 
   // Legend metrics (computed up front so the plot can reserve space for it).
@@ -299,10 +345,11 @@ function render(c, w, h, withBg) {
       c.beginPath(); c.moveTo(plotLeft, y); c.lineTo(plotRight, y); c.stroke();
     }
 
-    // Left axis label
+    // Left axis label (percentages in 100% stacked mode)
     c.fillStyle = '#777';
     c.textAlign = 'right';
-    c.fillText(fmtNum(leftMax * frac), plotLeft - 10, y);
+    c.fillText(pct100 ? Math.round(leftMax * frac) + '%' : fmtNum(leftMax * frac),
+               plotLeft - 10, y);
 
     // Right axis label
     if (hasRight) {
@@ -331,49 +378,95 @@ function render(c, w, h, withBg) {
 
   const scaleFor = s => (effAxis(s) === 'right' && state.dualAxis) ? rightMax : leftMax;
 
-  // Bars (grouped side-by-side within each slot). Each bar keeps a constant
-  // width, but only the bars that actually have a value are drawn and they're
-  // centered under the category tick — so a category missing one of its values
-  // still lines its remaining bar(s) up with the label instead of leaving it
-  // stuck in an empty lane. `barGap` sets the spacing between adjacent bars.
-  const barSeries = state.series.filter(s => s.kind === 'bar');
-  const groupW = slotW * state.barWidth;
-  const barW = barSeries.length ? groupW / barSeries.length : 0;
-  const gap = barW * state.barGap;
+  // Selection outline while the color popover is open — preview only, never in
+  // exported PNGs (those render into an offscreen context).
+  const drawSelection = (s, ci, bx, by, bw, bh) => {
+    if (c === ctx && selectedBar && selectedBar.seriesId === s.id && selectedBar.ci === ci) {
+      c.strokeStyle = '#ffffff';
+      c.lineWidth = 2;
+      c.strokeRect(bx - 1.5, by - 1.5, bw + 3, bh + 3);
+    }
+  };
+
   barHits = [];
-  cats.forEach((cat, ci) => {
-    const center = plotLeft + slotW * (ci + 0.5);
-    const present = barSeries.filter(s => {
-      const v = Number(s.values[ci]);
-      return isFinite(v) && v > 0;
-    });
-    if (!present.length) return;
-    const subLeft = center - (present.length * barW) / 2;
-    present.forEach((s, k) => {
-      const v = Number(s.values[ci]);
-      const axisMax = scaleFor(s) || 1;
-      const bh = Math.min(v / axisMax, 1) * plotH;
-      const bx = subLeft + k * barW + gap / 2;
-      const bw = Math.max(barW - gap, 1);
-      const by = plotBottom - bh;
-      const color = barColor(s, ci);
-      c.fillStyle = color;
-      c.fillRect(bx, by, bw, bh);
-      barHits.push({ x: bx, y: by, w: bw, h: bh, seriesId: s.id, ci });
+  if (!stacked) {
+    // Bars (grouped side-by-side within each slot). Each bar keeps a constant
+    // width, but only the bars that actually have a value are drawn and they're
+    // centered under the category tick — so a category missing one of its values
+    // still lines its remaining bar(s) up with the label instead of leaving it
+    // stuck in an empty lane. `barGap` sets the spacing between adjacent bars.
+    const groupW = slotW * state.barWidth;
+    const barW = barSeries.length ? groupW / barSeries.length : 0;
+    const gap = barW * state.barGap;
+    cats.forEach((cat, ci) => {
+      const center = plotLeft + slotW * (ci + 0.5);
+      const present = barSeries.filter(s => {
+        const v = Number(s.values[ci]);
+        return isFinite(v) && v > 0;
+      });
+      if (!present.length) return;
+      const subLeft = center - (present.length * barW) / 2;
+      present.forEach((s, k) => {
+        const v = Number(s.values[ci]);
+        const axisMax = scaleFor(s) || 1;
+        const bh = Math.min(v / axisMax, 1) * plotH;
+        const bx = subLeft + k * barW + gap / 2;
+        const bw = Math.max(barW - gap, 1);
+        const by = plotBottom - bh;
+        const color = barColor(s, ci);
+        c.fillStyle = color;
+        c.fillRect(bx, by, bw, bh);
+        barHits.push({ x: bx, y: by, w: bw, h: bh, seriesId: s.id, ci });
+        drawSelection(s, ci, bx, by, bw, bh);
 
-      // Selection outline while the color popover is open — preview only,
-      // never in exported PNGs (those render into an offscreen context).
-      if (c === ctx && selectedBar && selectedBar.seriesId === s.id && selectedBar.ci === ci) {
-        c.strokeStyle = '#ffffff';
-        c.lineWidth = 2;
-        c.strokeRect(bx - 1.5, by - 1.5, bw + 3, bh + 3);
-      }
-
-      if (s.showLabels)
-        drawValueLabel(c, (s.prefix || '') + fmtNum(v) + (s.suffix || ''), bx + bw / 2, by - 3, color,
-                       state.valueFontSize);
+        if (s.showLabels)
+          drawValueLabel(c, (s.prefix || '') + fmtNum(v) + (s.suffix || ''), bx + bw / 2, by - 3, color,
+                         state.valueFontSize);
+      });
     });
-  });
+  } else {
+    // Stacked / 100% stacked: one column per category, bar series stacked
+    // bottom-up in series order. Negative values are skipped (like grouped).
+    const groupW = Math.max(slotW * state.barWidth, 1);
+    cats.forEach((cat, ci) => {
+      const center = plotLeft + slotW * (ci + 0.5);
+      const bx = center - groupW / 2;
+      const segs = barSeries
+        .map(s => ({ s, v: Number(s.values[ci]) }))
+        .filter(x => isFinite(x.v) && x.v > 0);
+      if (!segs.length) return;
+      const sum = segs.reduce((a, x) => a + x.v, 0);
+
+      let yCursor = plotBottom;
+      segs.forEach(({ s, v }) => {
+        const frac = pct100 ? v / sum : v / (leftMax || 1);
+        const bh = Math.min(frac, 1) * plotH;
+        const by = yCursor - bh;
+        const color = barColor(s, ci);
+        c.fillStyle = color;
+        c.fillRect(bx, by, groupW, bh);
+        barHits.push({ x: bx, y: by, w: groupW, h: bh, seriesId: s.id, ci });
+        drawSelection(s, ci, bx, by, groupW, bh);
+
+        // Per-segment label, centered inside the segment — drawn only when the
+        // segment is tall enough to hold it (the "smart" part).
+        if (s.showLabels && bh >= state.valueFontSize + 6) {
+          const txt = state.segmentLabelMode === 'percent'
+            ? Math.round(v / sum * 100) + '%'
+            : (s.prefix || '') + fmtNum(v) + (s.suffix || '');
+          c.font = `600 ${state.valueFontSize}px ${FF}`;
+          c.fillStyle = '#ffffff';
+          c.textAlign = 'center';
+          c.textBaseline = 'middle';
+          c.fillText(txt, center, by + bh / 2);
+        }
+        yCursor = by;
+      });
+
+      if (state.showStackTotals)
+        drawValueLabel(c, fmtNum(sum), center, yCursor - 3, '#888888', state.valueFontSize);
+    });
+  }
 
   // Lines (one polyline per line series, gaps on null values)
   const lineSeries = state.series.filter(s => s.kind === 'line');
@@ -444,6 +537,9 @@ function getConfig() {
     bgColor: state.bgColor,
     barWidth: state.barWidth,
     barGap: state.barGap,
+    barMode: state.barMode,
+    showStackTotals: state.showStackTotals,
+    segmentLabelMode: state.segmentLabelMode,
     lineWidth: state.lineWidth,
     axisFontSize: state.axisFontSize,
     valueFontSize: state.valueFontSize,
@@ -482,6 +578,11 @@ function restore() {
   state.bgColor    = data.bgColor    ?? state.bgColor;
   state.barWidth   = data.barWidth   ?? state.barWidth;
   state.barGap     = data.barGap     ?? state.barGap;
+  // Migration: saves from before stacking lack these keys — default to the old
+  // grouped behavior so they restore pixel-identical.
+  state.barMode          = ['grouped', 'stacked', 'stacked100'].includes(data.barMode) ? data.barMode : 'grouped';
+  state.showStackTotals  = data.showStackTotals ?? false;
+  state.segmentLabelMode = data.segmentLabelMode === 'percent' ? 'percent' : 'value';
   state.lineWidth  = data.lineWidth  ?? state.lineWidth;
   state.axisFontSize   = data.axisFontSize   ?? state.axisFontSize;
   state.valueFontSize  = data.valueFontSize  ?? state.valueFontSize;
@@ -596,7 +697,7 @@ function renderSeries() {
 
     const axisToggle = makeSegToggle(
       [{ label: 'Left', value: 'left' }, { label: 'Right', value: 'right' }],
-      s.axis, !state.dualAxis,
+      s.axis, !state.dualAxis || (s.kind === 'bar' && state.barMode !== 'grouped'),
       v => { s.axis = v; renderSeries(); renderPreview(); }
     );
 
@@ -704,6 +805,34 @@ function renderMatrix() {
 const bindToggle = (id, key, after) =>
   bindStateToggle(id, state, key, () => { if (after) after(); renderPreview(); });
 
+// Bar mode selector; the stack-only rows (totals, segment-label mode) and the
+// bar-gap slider only make sense in one of the modes, so they're rebuilt/hidden
+// on every switch. Stacking also locks bar series to the left axis.
+function buildBarMode() {
+  const host = document.getElementById('barModeCtl');
+  host.innerHTML = '';
+  host.appendChild(makeSegToggle(
+    [{ label: 'Grouped', value: 'grouped' },
+     { label: 'Stacked', value: 'stacked' },
+     { label: '100%',    value: 'stacked100' }],
+    state.barMode, false,
+    v => { state.barMode = v; buildBarMode(); buildSliders(); renderSeries(); renderPreview(); },
+  ));
+  const stacked = state.barMode !== 'grouped';
+  document.getElementById('stackTotalsRow').hidden = !stacked;
+  document.getElementById('segLabelModeRow').hidden = !stacked;
+}
+
+function buildSegLabelMode() {
+  const host = document.getElementById('segLabelModeCtl');
+  host.innerHTML = '';
+  host.appendChild(makeSegToggle(
+    [{ label: 'Value', value: 'value' }, { label: '%', value: 'percent' }],
+    state.segmentLabelMode, false,
+    v => { state.segmentLabelMode = v; buildSegLabelMode(); renderPreview(); },
+  ));
+}
+
 // Legend position selector (hidden while the legend is off).
 function buildLegendPos() {
   const host = document.getElementById('legendPosCtl');
@@ -736,6 +865,7 @@ bindToggle('toggleTitle',  'showTitle');
 bindToggle('toggleGrid',   'showGrid');
 bindToggle('toggleLegend', 'showLegend', buildLegendPos);
 bindToggle('toggleDual',   'dualAxis', renderSeries);  // re-enable/disable axis toggles
+bindToggle('toggleStackTotals', 'showStackTotals');
 
 document.getElementById('comboTitle').addEventListener('input', e => {
   state.title = e.target.value;
@@ -752,11 +882,12 @@ function buildSliders() {
       fmt: v => Math.round(v * 100) + '%',
       onInput: v => { state.barWidth = v; renderPreview(); },
     }),
-    sliderRow('Bar gap', {
+    // Bar gap separates bars within a group — meaningless when stacked.
+    ...(state.barMode === 'grouped' ? [sliderRow('Bar gap', {
       min: 0, max: 0.6, step: 0.02, value: state.barGap,
       fmt: v => Math.round(v * 100) + '%',
       onInput: v => { state.barGap = v; renderPreview(); },
-    }),
+    })] : []),
     sliderRow('Line width', {
       min: 1, max: 8, step: 0.5, value: state.lineWidth,
       fmt: v => v, onInput: v => { state.lineWidth = v; renderPreview(); },
@@ -900,10 +1031,13 @@ function syncControls() {
   syncToggleBtn('toggleGrid',   state.showGrid);
   syncToggleBtn('toggleLegend', state.showLegend);
   syncToggleBtn('toggleDual',   state.dualAxis);
+  syncToggleBtn('toggleStackTotals', state.showStackTotals);
   applyBgColor(state.bgColor);
   buildSliders();
   buildLegendPos();
   buildAspect();
+  buildBarMode();
+  buildSegLabelMode();
 }
 
 function applyImportData(data) {
@@ -947,6 +1081,9 @@ function applyImportData(data) {
   if (isHex6(data.bgColor)) state.bgColor = data.bgColor;
   if (Number.isFinite(data.barWidth))       state.barWidth       = clamp(data.barWidth, 0.3, 0.95);
   if (Number.isFinite(data.barGap))         state.barGap         = clamp(data.barGap, 0, 0.6);
+  if (['grouped', 'stacked', 'stacked100'].includes(data.barMode)) state.barMode = data.barMode;
+  if (typeof data.showStackTotals === 'boolean') state.showStackTotals = data.showStackTotals;
+  if (['value', 'percent'].includes(data.segmentLabelMode)) state.segmentLabelMode = data.segmentLabelMode;
   if (Number.isFinite(data.lineWidth))      state.lineWidth      = clamp(data.lineWidth, 1, 8);
   if (Number.isFinite(data.axisFontSize))   state.axisFontSize   = clamp(data.axisFontSize, 8, 28);
   if (Number.isFinite(data.valueFontSize))  state.valueFontSize  = clamp(data.valueFontSize, 8, 24);

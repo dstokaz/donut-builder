@@ -1,5 +1,20 @@
 # Changelog
 
+## [2026-07-17] — Combo: stacked & 100% stacked bars, totals, segment labels
+
+### Added
+- **Bar mode** on the combo builder: Grouped (unchanged default), **Stacked**, and **100% stacked** (per-category normalization with a 0–100% left axis)
+- **Stack totals** — automatic sum label above each stack
+- **Segment labels** — per-series values or %-of-stack centered inside each segment, automatically hidden when a segment is too short to hold them
+- Per-bar color overrides (click a bar) work on stacked segments too
+
+### Changed
+- Stacking locks bar series to the left axis (a stack needs one scale); their Left/Right toggle disables while stacked. Line series keep their axis
+- Bar-gap slider hides in stacked modes (it only spaces bars within a group)
+- Saved configs from before this change restore identically (grouped mode); negative values are skipped in stacked modes, matching grouped behavior
+
+---
+
 ## [2026-07-17] — Waterfall chart builder
 
 ### Added
