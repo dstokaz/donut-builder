@@ -1,0 +1,1017 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scatter Builder</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+
+<div id="panel">
+  <div id="panel-inner">
+
+    <div class="section">
+      <div class="panel-title">Title</div>
+      <div class="field-row">
+        <div class="field-label-row">
+          <div class="field-label">Chart title</div>
+          <button class="vis-toggle" id="toggleTitle" title="Show/hide">●</button>
+        </div>
+        <input type="text" id="chartTitle" placeholder="Chart title">
+      </div>
+      <div class="field-row">
+        <div class="field-label">X axis title</div>
+        <input type="text" id="xLabel" placeholder="e.g. Growth %">
+      </div>
+      <div class="field-row">
+        <div class="field-label">Y axis title</div>
+        <input type="text" id="yLabel" placeholder="e.g. Margin %">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Series &amp; Points</div>
+      <div id="series-list"></div>
+      <button id="add-series" class="btn-add">+ Add series</button>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Bubbles</div>
+      <div class="toggle-row">
+        <span class="field-label">Size dimension (bubbles)</span>
+        <button class="vis-toggle" id="toggleSize" title="On/off">●</button>
+      </div>
+      <div id="bubble-sliders"></div>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Quadrants</div>
+      <div class="toggle-row">
+        <span class="field-label">Quadrant lines</span>
+        <button class="vis-toggle" id="toggleQuadrants" title="Show/hide">●</button>
+      </div>
+      <div class="field-stack" id="quadrantInputs">
+        <span class="field-label">Split at X / Y (blank = data mean)</span>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+          <input type="number" id="quadX" placeholder="auto">
+          <input type="number" id="quadY" placeholder="auto">
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Display</div>
+      <div class="toggle-row">
+        <span class="field-label">Point labels</span>
+        <button class="vis-toggle" id="togglePointLabels" title="Show/hide">●</button>
+      </div>
+      <div class="toggle-row">
+        <span class="field-label">Grid lines</span>
+        <button class="vis-toggle" id="toggleGrid" title="Show/hide">●</button>
+      </div>
+      <div class="toggle-row">
+        <span class="field-label">Legend</span>
+        <button class="vis-toggle" id="toggleLegend" title="Show/hide">●</button>
+      </div>
+      <div class="field-stack" id="legendPosRow">
+        <span class="field-label">Legend position</span>
+        <div id="legendPosCtl"></div>
+      </div>
+      <div class="field-stack">
+        <span class="field-label">Aspect ratio</span>
+        <div id="aspectCtl"></div>
+      </div>
+      <div id="display-sliders"></div>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Annotations</div>
+      <div id="ann-list"></div>
+      <button id="add-line" class="btn-add">+ Value line</button>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Background</div>
+      <div class="bg-row">
+        <div class="bg-swatch" id="bgSwatch">
+          <input type="color" id="bgColorPicker" value="#111111">
+        </div>
+        <input type="text" id="bgColorHex" value="#111111" placeholder="#111111">
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Import</div>
+      <button id="toggleImport" class="btn-add">Import JSON…</button>
+      <div id="import-panel" hidden>
+        <textarea id="importText" class="import-textarea" spellcheck="false"
+          placeholder='{
+  "series": [
+    { "name": "Products", "points": [
+      { "label": "Alpha", "x": 12, "y": 34, "size": 40 },
+      { "label": "Beta",  "x": 5,  "y": 18, "size": 25 }
+    ] }
+  ]
+}'></textarea>
+        <div class="import-hint">Accepts plain data (x/y required, size and label
+          optional), or a full config exported below. JSON paste is the fastest
+          way to enter many points.</div>
+        <div id="importMsg" class="import-msg"></div>
+        <div class="export-btns">
+          <button class="btn-export primary" id="applyImport">Apply</button>
+          <button class="btn-export" id="cancelImport">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="panel-title">Export</div>
+      <div class="export-btns">
+        <button class="btn-export primary" onclick="exportChart(true)">Export PNG</button>
+        <button class="btn-export" onclick="exportChart(false)">Export PNG (transparent)</button>
+        <button class="btn-export" onclick="exportJSON()">Export JSON (data + config)</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div id="preview">
+  <nav class="chart-tabs"></nav>
+  <canvas id="canvas"></canvas>
+</div>
+
+<script src="shared.js"></script>
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let nextId = 1;
+
+function mkPoint(label, x, y, size) {
+  return { id: nextId++, label, x, y, size, labelOffset: { x: 0, y: 0 } };
+}
+
+function mkSeries(name, color, points = []) {
+  return { id: nextId++, name, color, points };
+}
+
+const state = {
+  title: 'Portfolio',
+  showTitle: true,
+  series: [],
+  sizeEnabled: true,   // size → bubble area; off = constant dots
+  minR: 4,             // px bubble radius range
+  maxR: 26,
+  showPointLabels: true,
+  xLabel: 'Growth %',
+  yLabel: 'Margin %',
+  quadrants: { show: false, x: null, y: null },   // null = data mean
+  annotations: [],     // horizontal value lines, see sanitizeAnn()
+  showGrid: true,
+  showLegend: true,
+  legendPos: 'top',    // 'top' | 'bottom' | 'left' | 'right'
+  aspect: '4:3',       // see shared ASPECTS
+  bgColor: '#111111',
+  axisFontSize: 14,    // px
+  pointFontSize: 12,   // px
+};
+
+state.series = [
+  mkSeries('Products', PALETTE[4], [
+    mkPoint('Alpha', 12, 34, 40),
+    mkPoint('Beta',   5, 18, 25),
+    mkPoint('Gamma', 22, 12, 60),
+    mkPoint('Delta',  8, 26, 15),
+  ]),
+  mkSeries('Services', PALETTE[0], [
+    mkPoint('Consulting', 15, 22, 30),
+    mkPoint('Support',     3, 30, 20),
+    mkPoint('Training',   18,  8, 12),
+  ]),
+];
+
+const allPoints = () => state.series.flatMap(s => s.points);
+
+// ── Canvas rendering ────────────────────────────────────────────────────────
+let [CANVAS_W, CANVAS_H] = ASPECTS[state.aspect] || ASPECTS['4:3'];
+
+const canvas = document.getElementById('canvas');
+let ctx      = setupCanvas(canvas, CANVAS_W, CANVAS_H);
+
+let labelHitAreas = [];   // draggable point labels (preview renders only)
+let annHits = [];         // annotation pill rects
+let annDrag = null;
+let plotMetrics = null;   // last preview's scales, for drag mapping
+
+// Switch aspect ratio: resize the canvas backing store and repaint.
+function setAspect(a) {
+  if (!ASPECTS[a]) return;
+  state.aspect = a;
+  [CANVAS_W, CANVAS_H] = ASPECTS[a];
+  ctx = setupCanvas(canvas, CANVAS_W, CANVAS_H);
+  renderPreview();
+}
+
+// Bubble radius: area-proportional (sqrt) mapping of size onto [minR, maxR].
+function radiusFor(pt, sMin, sMax) {
+  if (!state.sizeEnabled) return 6;
+  const s = Number(pt.size);
+  if (!isFinite(s) || sMax <= sMin) return (state.minR + state.maxR) / 2;
+  return state.minR + (state.maxR - state.minR) * Math.sqrt((s - sMin) / (sMax - sMin));
+}
+
+function render(c, w, h, withBg) {
+  c.clearRect(0, 0, w, h);
+  if (withBg) { c.fillStyle = state.bgColor; c.fillRect(0, 0, w, h); }
+
+  const pts = allPoints().filter(p => isFinite(Number(p.x)) && isFinite(Number(p.y)));
+  if (!pts.length || !state.series.length) return;
+
+  // Scales with ~5% padding; zero always included via niceScale.
+  const xs = pts.map(p => Number(p.x)), ys = pts.map(p => Number(p.y));
+  const pad = (lo, hi) => { const d = (hi - lo) * 0.05 || 1; return [lo - d, hi + d]; };
+  const [xLo, xHi] = pad(Math.min(...xs), Math.max(...xs));
+  const [yLo, yHi] = pad(Math.min(...ys), Math.max(...ys));
+  const xScale = niceScale(xLo, xHi, 6);
+  const yScale = niceScale(yLo, yHi, 5);
+
+  const sizes = state.sizeEnabled ? pts.map(p => Number(p.size)).filter(isFinite) : [];
+  const sMin = sizes.length ? Math.min(...sizes) : 0;
+  const sMax = sizes.length ? Math.max(...sizes) : 0;
+
+  // Legend metrics (dot glyphs), computed up front to reserve plot space.
+  const lf = state.axisFontSize;
+  const legendOn = state.showLegend && state.series.length > 0;
+  const legPos = state.legendPos || 'top';
+  const glyphW = 12, glyphGap = 7, itemGapX = 22;
+  let legItemW = [], legBandH = 0, legBandW = 0;
+  if (legendOn) {
+    c.font = `500 ${lf}px ${FF}`;
+    legItemW = state.series.map(s => glyphW + glyphGap + c.measureText(s.name || 'Series').width);
+    legBandH = Math.round(lf * 1.5) + 12;
+    legBandW = Math.max(...legItemW) + 28;
+  }
+
+  // Plot rectangle.
+  let top = 28;
+  if (state.showTitle && state.title) top += 34;
+  if (legendOn && legPos === 'top') top += legBandH;
+  const plotTop = top;
+  let plotLeft  = state.yLabel ? 90 : 72;
+  let plotRight = w - 32;
+  if (legendOn && legPos === 'left')  plotLeft  += legBandW;
+  if (legendOn && legPos === 'right') plotRight -= legBandW;
+  let bottomPad = state.xLabel ? 78 : 58;
+  if (legendOn && legPos === 'bottom') bottomPad += legBandH;
+  const plotBottom = h - bottomPad;
+  const plotW = plotRight - plotLeft;
+  const plotH = plotBottom - plotTop;
+  if (plotW <= 0 || plotH <= 0) return;
+
+  const px = v => plotLeft + (v - xScale.min) / (xScale.max - xScale.min) * plotW;
+  const py = v => plotBottom - (v - yScale.min) / (yScale.max - yScale.min) * plotH;
+
+  // Title
+  if (state.showTitle && state.title) {
+    c.font = `600 22px ${FF}`;
+    c.fillStyle = '#e8e8e8';
+    c.textAlign = 'center';
+    c.textBaseline = 'alphabetic';
+    c.fillText(state.title, w / 2, 40);
+  }
+
+  // Legend
+  if (legendOn) {
+    c.font = `500 ${lf}px ${FF}`;
+    c.textBaseline = 'middle';
+    const drawItem = (s, gx, cy) => {
+      c.beginPath();
+      c.arc(gx + glyphW / 2, cy, 5, 0, Math.PI * 2);
+      c.fillStyle = s.color;
+      c.fill();
+      c.fillStyle = '#cfcfcf';
+      c.textAlign = 'left';
+      c.fillText(s.name || 'Series', gx + glyphW + glyphGap, cy);
+    };
+    if (legPos === 'left' || legPos === 'right') {
+      const itemH = Math.round(lf * 1.7);
+      const blockH = state.series.length * itemH;
+      let cy = plotTop + plotH / 2 - blockH / 2 + itemH / 2;
+      const gx = legPos === 'left' ? 14 : (w - legBandW + 8);
+      state.series.forEach(s => { drawItem(s, gx, cy); cy += itemH; });
+    } else {
+      const totalW = legItemW.reduce((a, b) => a + b, 0) + itemGapX * (state.series.length - 1);
+      let gx = w / 2 - totalW / 2;
+      const cy = legPos === 'top' ? plotTop - legBandH / 2 : h - legBandH / 2;
+      state.series.forEach((s, i) => { drawItem(s, gx, cy); gx += legItemW[i] + itemGapX; });
+    }
+  }
+
+  // Grid + ticks
+  const af = state.axisFontSize;
+  c.font = `400 ${af}px ${FF}`;
+  yScale.ticks.forEach(t => {
+    const ty = py(t);
+    if (state.showGrid) {
+      c.strokeStyle = '#262626';
+      c.lineWidth = 1;
+      c.beginPath(); c.moveTo(plotLeft, ty); c.lineTo(plotRight, ty); c.stroke();
+    }
+    c.fillStyle = '#777';
+    c.textAlign = 'right';
+    c.textBaseline = 'middle';
+    c.fillText(fmtNum(t), plotLeft - 10, ty);
+  });
+  xScale.ticks.forEach(t => {
+    const tx = px(t);
+    if (state.showGrid) {
+      c.strokeStyle = '#262626';
+      c.lineWidth = 1;
+      c.beginPath(); c.moveTo(tx, plotTop); c.lineTo(tx, plotBottom); c.stroke();
+    }
+    c.fillStyle = '#777';
+    c.textAlign = 'center';
+    c.textBaseline = 'top';
+    c.fillText(fmtNum(t), tx, plotBottom + 10);
+  });
+
+  // Zero axes emphasized when inside the plot range.
+  c.strokeStyle = '#3a3a3a';
+  c.lineWidth = 1.5;
+  if (yScale.min < 0 && yScale.max > 0) {
+    c.beginPath(); c.moveTo(plotLeft, py(0)); c.lineTo(plotRight, py(0)); c.stroke();
+  }
+  c.beginPath(); c.moveTo(plotLeft, plotBottom); c.lineTo(plotRight, plotBottom); c.stroke();
+  c.beginPath(); c.moveTo(plotLeft, plotTop); c.lineTo(plotLeft, plotBottom); c.stroke();
+
+  // Axis titles
+  if (state.xLabel) {
+    c.font = `500 ${af}px ${FF}`;
+    c.fillStyle = '#999';
+    c.textAlign = 'center';
+    c.textBaseline = 'top';
+    c.fillText(state.xLabel, plotLeft + plotW / 2, plotBottom + 10 + af * 1.6);
+  }
+  if (state.yLabel) {
+    c.save();
+    c.translate(24, plotTop + plotH / 2);
+    c.rotate(-Math.PI / 2);
+    c.font = `500 ${af}px ${FF}`;
+    c.fillStyle = '#999';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText(state.yLabel, 0, 0);
+    c.restore();
+  }
+
+  // Quadrant lines at the chosen (or mean) split point.
+  if (state.quadrants.show) {
+    const qx = Number.isFinite(Number(state.quadrants.x)) && state.quadrants.x !== null
+      ? Number(state.quadrants.x) : xs.reduce((a, b) => a + b, 0) / xs.length;
+    const qy = Number.isFinite(Number(state.quadrants.y)) && state.quadrants.y !== null
+      ? Number(state.quadrants.y) : ys.reduce((a, b) => a + b, 0) / ys.length;
+    drawVLine(c, px(qx), plotTop, plotBottom, { color: '#4a4a4a', dash: [5, 4] });
+    drawValueLine(c, plotLeft, plotRight, py(qy), { color: '#4a4a4a', width: 1, dash: [5, 4] });
+  }
+
+  // Points (bubbles) + draggable labels.
+  if (c === ctx) labelHitAreas = [];
+  const pf = state.pointFontSize;
+  state.series.forEach(s => {
+    s.points.forEach(pt => {
+      const xv = Number(pt.x), yv = Number(pt.y);
+      if (!isFinite(xv) || !isFinite(yv)) return;
+      const cx = px(xv), cy = py(yv);
+      const r = radiusFor(pt, sMin, sMax);
+      c.beginPath();
+      c.arc(cx, cy, r, 0, Math.PI * 2);
+      c.fillStyle = hexToRgba(s.color, state.sizeEnabled ? 0.55 : 0.9);
+      c.fill();
+      c.strokeStyle = s.color;
+      c.lineWidth = 1.5;
+      c.stroke();
+
+      if (state.showPointLabels && pt.label) {
+        const ox = pt.labelOffset.x, oy = pt.labelOffset.y;
+        const tx = cx + r + 5 + ox;
+        const ty = cy + oy;
+        // Leader line once the label has been dragged away.
+        if (ox !== 0 || oy !== 0) {
+          c.strokeStyle = '#555555';
+          c.lineWidth = 1;
+          c.beginPath(); c.moveTo(cx + r, cy); c.lineTo(tx - 3, ty); c.stroke();
+        }
+        c.font = `500 ${pf}px ${FF}`;
+        c.fillStyle = '#dddddd';
+        c.textAlign = 'left';
+        c.textBaseline = 'middle';
+        c.fillText(pt.label, tx, ty);
+        if (c === ctx) {
+          const mw = c.measureText(pt.label).width;
+          labelHitAreas.push({ point: pt, left: tx - 4, right: tx + mw + 4, top: ty - pf * 0.75, bottom: ty + pf * 0.75 });
+        }
+      }
+    });
+  });
+
+  // ── Annotations (horizontal value lines) ───────────────────────────────────
+  if (c === ctx) {
+    annHits = [];
+    plotMetrics = { plotTop, plotBottom, plotH,
+                    yMin: yScale.min, yMax: yScale.max, step: yScale.step };
+  }
+  state.annotations.forEach(ann => {
+    const v = Number(ann.value);
+    if (!isFinite(v)) return;
+    const ly = py(Math.min(Math.max(v, yScale.min), yScale.max));
+    drawValueLine(c, plotLeft, plotRight, ly, { color: ann.color });
+    const txt = [ann.label, ann.showValue ? fmtNum(v) : ''].filter(Boolean).join(' ');
+    if (txt) {
+      c.font = `600 ${pf}px ${FF}`;
+      const pw = c.measureText(txt).width + 12;
+      const ph = pf + 6;
+      const lx = plotRight - pw / 2 - 6;
+      const bottomY = Math.max(ly - 4, plotTop + ph);
+      drawValueLabel(c, txt, lx, bottomY, ann.color, pf);
+      if (c === ctx) annHits.push({ x: lx - pw / 2, y: bottomY - ph, w: pw, h: ph, annId: ann.id });
+    } else if (c === ctx) {
+      annHits.push({ x: plotRight - 46, y: ly - 8, w: 40, h: 16, annId: ann.id });
+    }
+  });
+}
+
+function renderPreview() {
+  render(ctx, CANVAS_W, CANVAS_H, true);
+  persist();
+}
+
+// ── Persistence ───────────────────────────────────────────────────────────────
+const STORAGE_KEY = 'scatter-builder-v1';
+
+function sanitizeAnn(a) {
+  if (!a || a.type !== 'line') return null;
+  return {
+    id: nextId++,
+    type: 'line',
+    value: Number.isFinite(Number(a.value)) ? Number(a.value) : 0,
+    label: a.label != null ? String(a.label) : '',
+    color: isHex6(a.color) ? a.color : '#E84545',
+    showValue: a.showValue !== false,
+  };
+}
+
+// Validate raw series (from storage or import) into clean state series.
+function sanitizeSeries(raw) {
+  nextId = 1;
+  return raw.map((s, i) => ({
+    id: nextId++,
+    name: s?.name != null ? String(s.name) : 'Series ' + (i + 1),
+    color: isHex6(s?.color) ? s.color : PALETTE[i % PALETTE.length],
+    points: (Array.isArray(s?.points) ? s.points : []).map((p, j) => {
+      const x = Number(p?.x), y = Number(p?.y);
+      const size = Number(p?.size);
+      const off = p?.labelOffset;
+      return {
+        id: nextId++,
+        label: p?.label != null ? String(p.label) : '',
+        x: isFinite(x) ? x : 0,
+        y: isFinite(y) ? y : 0,
+        size: isFinite(size) ? size : null,
+        labelOffset: off && Number.isFinite(off.x) && Number.isFinite(off.y)
+          ? { x: off.x, y: off.y } : { x: 0, y: 0 },
+      };
+    }),
+  }));
+}
+
+// Full, portable snapshot of the chart: data + visual configuration. Shared by
+// localStorage persistence and JSON export so the two never drift. Ids are
+// internal-only and omitted (import/restore reassign them).
+function getConfig() {
+  return {
+    title: state.title,
+    showTitle: state.showTitle,
+    series: state.series.map(s => ({
+      name: s.name,
+      color: s.color,
+      points: s.points.map(({ label, x, y, size, labelOffset }) =>
+        ({ label, x, y, size, labelOffset: { ...labelOffset } })),
+    })),
+    sizeEnabled: state.sizeEnabled,
+    minR: state.minR,
+    maxR: state.maxR,
+    showPointLabels: state.showPointLabels,
+    xLabel: state.xLabel,
+    yLabel: state.yLabel,
+    quadrants: { ...state.quadrants },
+    annotations: state.annotations.map(({ type, value, label, color, showValue }) =>
+      ({ type, value, label, color, showValue })),
+    showGrid: state.showGrid,
+    showLegend: state.showLegend,
+    legendPos: state.legendPos,
+    aspect: state.aspect,
+    bgColor: state.bgColor,
+    axisFontSize: state.axisFontSize,
+    pointFontSize: state.pointFontSize,
+  };
+}
+
+function persist() {
+  saveState(STORAGE_KEY, getConfig());
+}
+
+function restore() {
+  const data = loadState(STORAGE_KEY);
+  if (!data || !Array.isArray(data.series) || !data.series.length) return false;
+
+  state.series          = sanitizeSeries(data.series);
+  state.title           = data.title           ?? state.title;
+  state.showTitle       = data.showTitle       ?? true;
+  state.sizeEnabled     = data.sizeEnabled     ?? true;
+  state.minR            = data.minR            ?? state.minR;
+  state.maxR            = data.maxR            ?? state.maxR;
+  state.showPointLabels = data.showPointLabels ?? true;
+  state.xLabel          = data.xLabel          ?? '';
+  state.yLabel          = data.yLabel          ?? '';
+  if (data.quadrants) {
+    state.quadrants.show = data.quadrants.show === true;
+    state.quadrants.x = Number.isFinite(Number(data.quadrants.x)) && data.quadrants.x !== null ? Number(data.quadrants.x) : null;
+    state.quadrants.y = Number.isFinite(Number(data.quadrants.y)) && data.quadrants.y !== null ? Number(data.quadrants.y) : null;
+  }
+  state.annotations = Array.isArray(data.annotations)
+    ? data.annotations.map(sanitizeAnn).filter(Boolean) : [];
+  state.showGrid      = data.showGrid      ?? true;
+  state.showLegend    = data.showLegend    ?? true;
+  state.legendPos     = ['top', 'bottom', 'left', 'right'].includes(data.legendPos) ? data.legendPos : 'top';
+  state.aspect        = ASPECTS[data.aspect] ? data.aspect : '4:3';
+  state.bgColor       = isHex6(data.bgColor) ? data.bgColor : state.bgColor;
+  state.axisFontSize  = data.axisFontSize  ?? state.axisFontSize;
+  state.pointFontSize = data.pointFontSize ?? state.pointFontSize;
+  return true;
+}
+
+// ── UI: Series cards with point tables ───────────────────────────────────────
+function renderSeries() {
+  const list = document.getElementById('series-list');
+  list.innerHTML = '';
+
+  state.series.forEach((s, sIdx) => {
+    const card = document.createElement('div');
+    card.className = 'series-card';
+
+    const top = document.createElement('div');
+    top.className = 'series-card-top';
+
+    const swatch = colorSwatch(s.color, hex => { s.color = hex; renderPreview(); });
+
+    const nameIn = document.createElement('input');
+    nameIn.type = 'text';
+    nameIn.value = s.name;
+    nameIn.placeholder = 'Series name';
+    nameIn.addEventListener('input', e => { s.name = e.target.value; renderPreview(); });
+
+    const del = document.createElement('button');
+    del.className = 'btn-icon delete';
+    del.innerHTML = '×';
+    del.title = 'Remove series';
+    del.addEventListener('click', () => {
+      if (state.series.length <= 1) return;
+      state.series.splice(sIdx, 1);
+      renderSeries();
+      renderPreview();
+    });
+
+    top.append(swatch, nameIn, del);
+
+    // Points table: label | x | y | [size] | ×
+    const wrap = document.createElement('div');
+    wrap.className = 'matrix-wrap';
+    const table = document.createElement('table');
+    table.className = 'value-matrix';
+
+    const thead = document.createElement('thead');
+    const hr = document.createElement('tr');
+    const cols = state.sizeEnabled
+      ? ['Label', 'X', 'Y', 'Size', '']
+      : ['Label', 'X', 'Y', ''];
+    cols.forEach(t => {
+      const th = document.createElement('th');
+      th.textContent = t;
+      hr.appendChild(th);
+    });
+    thead.appendChild(hr);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    s.points.forEach((pt, pIdx) => {
+      const tr = document.createElement('tr');
+
+      const cell = (value, type, onCh, ph) => {
+        const td = document.createElement('td');
+        const input = document.createElement('input');
+        input.type = type;
+        input.value = value ?? '';
+        if (ph) input.placeholder = ph;
+        input.addEventListener('input', e => { onCh(e.target.value); renderPreview(); });
+        td.appendChild(input);
+        return td;
+      };
+
+      tr.appendChild(cell(pt.label, 'text', v => { pt.label = v; }, 'Point'));
+      tr.appendChild(cell(pt.x, 'number', v => { pt.x = v === '' ? 0 : parseFloat(v); }));
+      tr.appendChild(cell(pt.y, 'number', v => { pt.y = v === '' ? 0 : parseFloat(v); }));
+      if (state.sizeEnabled)
+        tr.appendChild(cell(pt.size, 'number', v => { pt.size = v === '' ? null : parseFloat(v); }));
+
+      const delTd = document.createElement('td');
+      const delBtn = document.createElement('button');
+      delBtn.className = 'btn-icon delete';
+      delBtn.innerHTML = '×';
+      delBtn.title = 'Remove point';
+      delBtn.addEventListener('click', () => {
+        s.points.splice(pIdx, 1);
+        renderSeries();
+        renderPreview();
+      });
+      delTd.appendChild(delBtn);
+      tr.appendChild(delTd);
+
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+
+    const addPt = document.createElement('button');
+    addPt.className = 'btn-add';
+    addPt.textContent = '+ Add point';
+    addPt.addEventListener('click', () => {
+      s.points.push(mkPoint('New point', 0, 0, null));
+      renderSeries();
+      renderPreview();
+    });
+
+    card.append(top, wrap, addPt);
+    list.appendChild(card);
+  });
+}
+
+document.getElementById('add-series').addEventListener('click', () => {
+  const color = PALETTE[state.series.length % PALETTE.length];
+  state.series.push(mkSeries('Series ' + (state.series.length + 1), color, [mkPoint('New point', 0, 0, null)]));
+  renderSeries();
+  renderPreview();
+});
+
+// ── UI: Annotation cards (value lines) ────────────────────────────────────────
+function refreshAnnInputs() {
+  state.annotations.forEach(a => {
+    const inp = document.querySelector(`input.ann-value[data-ann-id="${a.id}"]`);
+    if (inp && document.activeElement !== inp) inp.value = a.value;
+  });
+}
+
+function renderAnnotations() {
+  const list = document.getElementById('ann-list');
+  if (!list) return;
+  list.innerHTML = '';
+
+  state.annotations.forEach((ann, idx) => {
+    const card = document.createElement('div');
+    card.className = 'series-card';
+    const top = document.createElement('div');
+    top.className = 'series-card-top';
+    top.style.gridTemplateColumns = '28px 64px 1fr 28px';
+
+    const swatch = colorSwatch(ann.color, hex => { ann.color = hex; renderPreview(); });
+
+    const valIn = document.createElement('input');
+    valIn.type = 'number';
+    valIn.className = 'ann-value';
+    valIn.dataset.annId = ann.id;
+    valIn.value = ann.value;
+    valIn.title = 'Line Y value (drag the pill on the chart too)';
+    valIn.addEventListener('input', e => {
+      ann.value = e.target.value === '' ? 0 : parseFloat(e.target.value);
+      renderPreview();
+    });
+
+    const labIn = document.createElement('input');
+    labIn.type = 'text';
+    labIn.value = ann.label;
+    labIn.placeholder = 'Label';
+    labIn.addEventListener('input', e => { ann.label = e.target.value; renderPreview(); });
+
+    const del = document.createElement('button');
+    del.className = 'btn-icon delete';
+    del.innerHTML = '×';
+    del.title = 'Remove';
+    del.addEventListener('click', () => {
+      state.annotations.splice(idx, 1);
+      renderAnnotations();
+      renderPreview();
+    });
+
+    top.append(swatch, valIn, labIn, del);
+
+    const row = document.createElement('div');
+    row.className = 'toggle-row';
+    const lbl = document.createElement('span');
+    lbl.className = 'field-label';
+    lbl.textContent = 'Show value';
+    row.append(lbl, visToggle(ann.showValue, on => { ann.showValue = on; renderPreview(); }));
+
+    card.append(top, row);
+    list.appendChild(card);
+  });
+}
+
+document.getElementById('add-line').addEventListener('click', () => {
+  const v = plotMetrics ? Math.round((plotMetrics.yMin + plotMetrics.yMax) / 2) : 20;
+  state.annotations.push(sanitizeAnn({ type: 'line', value: v, label: 'Target' }));
+  renderAnnotations();
+  renderPreview();
+});
+
+// ── Canvas interaction: label dragging + annotation dragging ──────────────────
+let dragState = null;   // { point, startX, startY, origX, origY, moved }
+
+function canvasPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - rect.left) * (CANVAS_W / rect.width),
+    y: (e.clientY - rect.top)  * (CANVAS_H / rect.height),
+  };
+}
+
+function hitLabel(x, y) {
+  for (const area of labelHitAreas) {
+    if (x >= area.left && x <= area.right && y >= area.top && y <= area.bottom)
+      return area.point;
+  }
+  return null;
+}
+
+function annHitAt(x, y) {
+  return annHits.find(a => x >= a.x && x <= a.x + a.w && y >= a.y && y <= a.y + a.h) || null;
+}
+
+canvas.addEventListener('mousedown', e => {
+  const pos = canvasPos(e);
+
+  const annHit = annHitAt(pos.x, pos.y);
+  if (annHit) {
+    const ann = state.annotations.find(a => a.id === annHit.annId);
+    if (ann) {
+      e.preventDefault();
+      annDrag = { ann, startY: pos.y, orig: Number(ann.value) || 0 };
+      return;
+    }
+  }
+
+  const point = hitLabel(pos.x, pos.y);
+  if (!point) return;
+  e.preventDefault();
+  dragState = {
+    point,
+    startX: pos.x, startY: pos.y,
+    origX: point.labelOffset.x, origY: point.labelOffset.y,
+    moved: false,
+  };
+  canvas.style.cursor = 'grabbing';
+});
+
+canvas.addEventListener('mousemove', e => {
+  const pos = canvasPos(e);
+  if (annDrag && plotMetrics) {
+    const dy = pos.y - annDrag.startY;
+    const span = plotMetrics.yMax - plotMetrics.yMin;
+    const raw = annDrag.orig - dy / plotMetrics.plotH * span;
+    const step = plotMetrics.step / 10 || 1;
+    annDrag.ann.value = Math.round(Math.min(Math.max(raw, plotMetrics.yMin), plotMetrics.yMax) / step) * step;
+    annDrag.ann.value = Math.round(annDrag.ann.value * 100) / 100;
+    refreshAnnInputs();
+    renderPreview();
+    return;
+  }
+  if (dragState) {
+    const dx = pos.x - dragState.startX;
+    const dy = pos.y - dragState.startY;
+    if (!dragState.moved && Math.hypot(dx, dy) > 4) dragState.moved = true;
+    if (dragState.moved) {
+      dragState.point.labelOffset.x = dragState.origX + dx;
+      dragState.point.labelOffset.y = dragState.origY + dy;
+      renderPreview();
+    }
+    return;
+  }
+  canvas.style.cursor = annHitAt(pos.x, pos.y) ? 'ns-resize'
+    : hitLabel(pos.x, pos.y) ? 'grab' : 'default';
+});
+
+canvas.addEventListener('mouseup', () => {
+  dragState = null;
+  annDrag = null;
+});
+
+canvas.addEventListener('mouseleave', () => {
+  dragState = null;
+  annDrag = null;
+  canvas.style.cursor = 'default';
+});
+
+// ── Toggles / inputs ──────────────────────────────────────────────────────────
+const bindToggle = (id, key, after) =>
+  bindStateToggle(id, state, key, () => { if (after) after(); renderPreview(); });
+
+bindToggle('toggleTitle',       'showTitle');
+bindToggle('togglePointLabels', 'showPointLabels');
+bindToggle('toggleGrid',        'showGrid');
+bindToggle('toggleSize',        'sizeEnabled', () => { renderSeries(); buildBubbleSliders(); });
+bindToggle('toggleLegend',      'showLegend', buildLegendPos);
+
+document.getElementById('toggleQuadrants').addEventListener('click', () => {
+  state.quadrants.show = !state.quadrants.show;
+  syncToggleBtn('toggleQuadrants', state.quadrants.show);
+  document.getElementById('quadrantInputs').hidden = !state.quadrants.show;
+  renderPreview();
+});
+
+document.getElementById('chartTitle').addEventListener('input', e => {
+  state.title = e.target.value;
+  renderPreview();
+});
+document.getElementById('xLabel').addEventListener('input', e => {
+  state.xLabel = e.target.value;
+  renderPreview();
+});
+document.getElementById('yLabel').addEventListener('input', e => {
+  state.yLabel = e.target.value;
+  renderPreview();
+});
+document.getElementById('quadX').addEventListener('input', e => {
+  state.quadrants.x = e.target.value === '' ? null : parseFloat(e.target.value);
+  renderPreview();
+});
+document.getElementById('quadY').addEventListener('input', e => {
+  state.quadrants.y = e.target.value === '' ? null : parseFloat(e.target.value);
+  renderPreview();
+});
+
+// Legend position selector (hidden while the legend is off).
+function buildLegendPos() {
+  const host = document.getElementById('legendPosCtl');
+  host.innerHTML = '';
+  host.appendChild(makeSegToggle(
+    [
+      { label: 'Top',    value: 'top' },
+      { label: 'Bottom', value: 'bottom' },
+      { label: 'Left',   value: 'left' },
+      { label: 'Right',  value: 'right' },
+    ],
+    state.legendPos, false,
+    v => { state.legendPos = v; buildLegendPos(); renderPreview(); },
+  ));
+  document.getElementById('legendPosRow').hidden = !state.showLegend;
+}
+
+// Aspect-ratio selector — resizes the canvas to the chosen ratio.
+function buildAspect() {
+  const host = document.getElementById('aspectCtl');
+  host.innerHTML = '';
+  host.appendChild(makeSegToggle(
+    Object.keys(ASPECTS).map(r => ({ label: r, value: r })),
+    state.aspect, false,
+    v => { setAspect(v); buildAspect(); },
+  ));
+}
+
+// ── Sliders ───────────────────────────────────────────────────────────────────
+function buildBubbleSliders() {
+  const host = document.getElementById('bubble-sliders');
+  host.innerHTML = '';
+  if (!state.sizeEnabled) return;
+  host.append(
+    sliderRow('Min bubble radius', {
+      min: 2, max: 20, step: 1, value: state.minR,
+      fmt: v => v + 'px',
+      onInput: v => { state.minR = Math.min(v, state.maxR); renderPreview(); },
+    }),
+    sliderRow('Max bubble radius', {
+      min: 8, max: 60, step: 1, value: state.maxR,
+      fmt: v => v + 'px',
+      onInput: v => { state.maxR = Math.max(v, state.minR); renderPreview(); },
+    }),
+  );
+}
+
+function buildSliders() {
+  const host = document.getElementById('display-sliders');
+  host.innerHTML = '';
+  host.append(
+    sliderRow('Axis text size', {
+      min: 8, max: 28, step: 1, value: state.axisFontSize,
+      fmt: v => v, onInput: v => { state.axisFontSize = v; renderPreview(); },
+    }),
+    sliderRow('Point text size', {
+      min: 8, max: 24, step: 1, value: state.pointFontSize,
+      fmt: v => v, onInput: v => { state.pointFontSize = v; renderPreview(); },
+    }),
+  );
+}
+
+// ── Background ────────────────────────────────────────────────────────────────
+const applyBgColor = bindBgControl(state, renderPreview);
+
+// ── Export ────────────────────────────────────────────────────────────────────
+function exportChart(withBg) {
+  exportPNG({
+    render, w: CANVAS_W, h: CANVAS_H, withBg,
+    filename: withBg ? 'scatter.png' : 'scatter-transparent.png',
+  });
+}
+
+function exportJSON() {
+  downloadText('scatter.json', JSON.stringify(getConfig(), null, 2));
+}
+
+// ── Import (paste JSON) ───────────────────────────────────────────────────────
+// Accepts a minimal data shape ({ "series": [{ name, points: [{x, y, size?,
+// label?}] }] }) or a full config as produced by Export JSON.
+function applyImportData(data) {
+  const rawSeries = Array.isArray(data?.series) ? data.series : null;
+  if (!rawSeries || !rawSeries.length)
+    return { ok: false, msg: 'Need a non-empty "series" array.' };
+  if (!rawSeries.every(s => s && Array.isArray(s.points)))
+    return { ok: false, msg: 'Each series needs a "points" array.' };
+  if (!rawSeries.every(s => s.points.every(p => p && isFinite(Number(p.x)) && isFinite(Number(p.y)))))
+    return { ok: false, msg: 'Each point needs numeric "x" and "y".' };
+
+  state.series = sanitizeSeries(rawSeries);
+
+  // Optional visual configuration — applied only when present and valid.
+  const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+  if (data.title != null)                        state.title           = String(data.title);
+  if (typeof data.showTitle === 'boolean')       state.showTitle       = data.showTitle;
+  if (typeof data.sizeEnabled === 'boolean')     state.sizeEnabled     = data.sizeEnabled;
+  if (typeof data.showPointLabels === 'boolean') state.showPointLabels = data.showPointLabels;
+  if (typeof data.showGrid === 'boolean')        state.showGrid        = data.showGrid;
+  if (typeof data.showLegend === 'boolean')      state.showLegend      = data.showLegend;
+  if (data.xLabel != null) state.xLabel = String(data.xLabel);
+  if (data.yLabel != null) state.yLabel = String(data.yLabel);
+  if (data.quadrants) {
+    state.quadrants.show = data.quadrants.show === true;
+    state.quadrants.x = Number.isFinite(Number(data.quadrants.x)) && data.quadrants.x !== null ? Number(data.quadrants.x) : null;
+    state.quadrants.y = Number.isFinite(Number(data.quadrants.y)) && data.quadrants.y !== null ? Number(data.quadrants.y) : null;
+  }
+  state.annotations = Array.isArray(data.annotations)
+    ? data.annotations.map(sanitizeAnn).filter(Boolean) : [];
+  if (['top', 'bottom', 'left', 'right'].includes(data.legendPos)) state.legendPos = data.legendPos;
+  if (ASPECTS[data.aspect]) state.aspect = data.aspect;
+  if (isHex6(data.bgColor)) state.bgColor = data.bgColor;
+  if (Number.isFinite(data.minR)) state.minR = clamp(data.minR, 2, 20);
+  if (Number.isFinite(data.maxR)) state.maxR = clamp(data.maxR, 8, 60);
+  if (state.minR > state.maxR) [state.minR, state.maxR] = [state.maxR, state.minR];
+  if (Number.isFinite(data.axisFontSize))  state.axisFontSize  = clamp(data.axisFontSize, 8, 28);
+  if (Number.isFinite(data.pointFontSize)) state.pointFontSize = clamp(data.pointFontSize, 8, 24);
+
+  renderSeries();
+  renderAnnotations();
+  syncControls();
+  setAspect(state.aspect);   // resize canvas to imported ratio, then repaint
+  const nPts = allPoints().length;
+  return { ok: true, msg: 'Imported ' + state.series.length + ' series, ' + nPts + ' points.' };
+}
+
+initImportPanel(applyImportData);
+
+// Push the current state into every panel control (inputs, toggles, sliders,
+// selectors, background). Shared by import and initial load so they can't drift.
+function syncControls() {
+  document.getElementById('chartTitle').value = state.title;
+  document.getElementById('xLabel').value = state.xLabel;
+  document.getElementById('yLabel').value = state.yLabel;
+  document.getElementById('quadX').value = state.quadrants.x ?? '';
+  document.getElementById('quadY').value = state.quadrants.y ?? '';
+  document.getElementById('quadrantInputs').hidden = !state.quadrants.show;
+  syncToggleBtn('toggleTitle',       state.showTitle);
+  syncToggleBtn('toggleSize',        state.sizeEnabled);
+  syncToggleBtn('togglePointLabels', state.showPointLabels);
+  syncToggleBtn('toggleGrid',        state.showGrid);
+  syncToggleBtn('toggleLegend',      state.showLegend);
+  syncToggleBtn('toggleQuadrants',   state.quadrants.show);
+  applyBgColor(state.bgColor);
+  buildBubbleSliders();
+  buildSliders();
+  buildLegendPos();
+  buildAspect();
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+restore();
+renderSeries();
+renderAnnotations();
+syncControls();
+setAspect(state.aspect);   // size the canvas to the restored ratio and paint
+</script>
+</body>
+</html>

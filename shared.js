@@ -323,6 +323,18 @@ function drawValueLine(c, x1, x2, y, { color = '#E84545', width = 1.5, dash = [6
   c.setLineDash([]);
 }
 
+// Dashed vertical reference line (quadrant split).
+function drawVLine(c, x, y1, y2, { color = '#555555', width = 1, dash = [4, 4] } = {}) {
+  c.strokeStyle = color;
+  c.lineWidth = width;
+  if (dash) c.setLineDash(dash);
+  c.beginPath();
+  c.moveTo(x, y1);
+  c.lineTo(x, y2);
+  c.stroke();
+  c.setLineDash([]);
+}
+
 // Compound annual growth rate from v0 to v1 over `periods` periods.
 // Returns null when undefined (nonpositive endpoints or zero periods).
 function computeCAGR(v0, v1, periods) {
@@ -374,6 +386,7 @@ const CHARTS = [
   { href: 'donut.html',     label: 'Donut' },
   { href: 'combo.html',     label: 'Combo' },
   { href: 'waterfall.html', label: 'Waterfall' },
+  { href: 'scatter.html',   label: 'Scatter' },
 ];
 
 function initChartTabs() {

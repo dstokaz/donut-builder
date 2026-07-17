@@ -1,5 +1,18 @@
 # Changelog
 
+## [2026-07-17] — Scatter / bubble chart builder
+
+### Added
+- **Scatter builder** (`scatter.html`) — X-Y point chart with color-coded series and per-series point tables (label / x / y / size)
+  - **Bubble mode** — a size dimension mapped area-proportionally (√) onto a min/max radius range; toggle off for uniform dots
+  - **Draggable point labels** with automatic leader lines once moved (same interaction as the donut builder)
+  - **Quadrant lines** splitting at manual X/Y values or the data mean (BCG-matrix style)
+  - Horizontal **value-line annotations** with draggable pills, both "nice" signed axes via `niceScale`, axis titles (Y rotated), legend with dot glyphs in 4 positions, grid, aspect ratios
+  - Full persistence (`scatter-builder-v1`), PNG export (background / transparent), and JSON export/import (minimal `{ "series": [...] }` or full config; JSON paste is the bulk-entry path)
+- `drawVLine()` in `shared.js` (vertical dashed reference line) and a Scatter entry in the launcher + shared nav
+
+---
+
 ## [2026-07-17] — Annotations: CAGR/diff arrows and value lines
 
 ### Added
