@@ -1,5 +1,108 @@
 # Changelog
 
+## [2026-07-27] — Workspace pattern across every builder
+
+Round 2: donut, waterfall and scatter get what combo got, adapted to each data
+model. The button, its positioning and dismissal are now one shared
+`initChartAdd` in `shared.js`; each page supplies only its own form.
+
+### Added
+- **Hover cues everywhere** — waterfall bars, donut slices and scatter bubbles
+  light up under the cursor, with a bright cap on the edge you can drag
+- **A floating `+` on every chart**, each with one dropdown that both adds and
+  edits, because "add a datum" and "fix a datum" are the same form:
+  - Waterfall: step dropdown plus label, type and value; subtotals stay
+    read-only since they report the running total
+  - Donut: segment dropdown plus label and value — or share, for a segment
+    driven by one — plus ring when multi-ring is on
+  - Scatter: series picker, point dropdown, label, x, y and size, plus a Series
+    mode; a new series starts with one point so it can actually be seen
+- **Remove in every mark popover**, each mirroring its sidebar's last-one guard
+- **Data / Style tabs and a pinned import/export footer** on all three
+
+### Fixed
+- **Every remaining drag persisted per mouse move.** Donut label and slice
+  drags, waterfall value and annotation drags, and scatter label, point and
+  annotation drags all called `renderPreview` — repaint *plus* a localStorage
+  write — on each move. All now repaint during motion and commit once on release
+
+---
+
+## [2026-07-27] — The combo chart becomes a workspace
+
+Round 1 of the interface rework, combo only — the pattern that round 2 rolled
+out to the other three builders.
+
+### Added
+- **Hover cues on the chart.** Bars and line points light up under the cursor,
+  and the value edge grows a bright cap when a press there would start a drag.
+  The editing added earlier was invisible until you happened to find it; this is
+  what makes the chart read as touchable rather than as a picture
+- **An add-data popover on a floating `+`** at the chart's top-right, in two
+  modes. **Data** is a period dropdown plus one value per series: pick an
+  existing period to edit its column, or `+ New period…` to append one (which
+  reveals a name field). Adding and filling are the same form because a period
+  is always a column of values — only touched fields commit, so an existing
+  period's untouched series keep what they had. **Series** creates a bar or line
+  series, backfilled to the current period count. The button is DOM chrome
+  positioned against the canvas, so it tracks the chart at any zoom and can
+  never reach an exported PNG
+- **Clear and Remove in the mark popover**, so deleting data no longer means
+  leaving the chart. Clear empties one value; Remove drops the category from
+  every series, with the same last-one guard the sidebar uses
+- **Data / Style tabs in the panel.** Data holds Title, Categories, Series,
+  Values and Annotations; Style holds Axis, Display and Background. Import and
+  Export moved to a footer pinned at the bottom of the panel, which now stays
+  put while only the section list scrolls
+
+### Fixed
+- **Dragging a value wrote to localStorage on every mouse move.** `renderPreview`
+  is repaint *plus* persist, and both the value and annotation drags called it
+  per pixel. Repaints during motion now go through a paint-only path and commit
+  once on release
+
+---
+
+## [2026-07-27] — Edit data directly on the chart
+
+### Added
+- **Click any mark to edit its value** — a popover opens with a live number field
+  that writes straight into state. Chart, popover, and sidebar stay in sync in
+  both directions, and the linked sidebar field is tinted and scrolled into view
+  so it's obvious which number you're editing
+  - Combo: bar segments and line points (line points also gained hit-testing)
+  - Donut: slices — edits the value, or the manual share for slices pinned by one
+  - Waterfall: deltas and totals; subtotals show their computed running total read-only
+  - Scatter: x, y, and bubble size
+- **Drag a mark to adjust it** — bar top edges, waterfall value edges, donut slice
+  trailing edges, and scatter bubbles (which follow the cursor in both axes).
+  Values snap to a tenth of the axis tick step
+- **Axes are pinned for the duration of a drag**, so a mark tracks the cursor
+  instead of chasing an axis that re-nices as the value grows
+- A donut slice offers no resize grip when its own number can't change its size —
+  a value-driven slice among manual-percent ones just absorbs the remainder
+
+### Changed
+- **The chart pane is frozen and the chart is centred in it.** `body` was
+  `min-height: 100vh`, so a tall panel grew the body past the viewport and the
+  whole document scrolled — taking the chart with it, and centring it against a
+  box taller than the screen. `body` is now exactly the viewport with
+  `overflow: hidden`; only the panel scrolls, inside itself
+- The canvas cap is measured against the preview pane rather than a hardcoded
+  `calc(100vh - 130px)`, and the pane's top padding offsets the zoom control so
+  the canvas — not the canvas-plus-controls group — lands on the centre line
+
+### Fixed
+- **The `hidden` attribute did nothing** on any element whose class set `display`,
+  because an author rule outranks the UA `[hidden] { display: none }`. A stray
+  black dot on the combo chart was an empty, never-hidden `.bar-popover` sitting
+  at its static position in the centre of the preview; the Import panel and the
+  axis-break, segment-label, legend-position and stack-total rows were also
+  permanently expanded. One `[hidden] { display: none !important }` in
+  `shared.css` fixes all of them
+
+---
+
 ## [2026-07-17] — Panel ergonomics + stale-cache fix
 
 ### Fixed

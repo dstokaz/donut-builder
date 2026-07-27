@@ -9,9 +9,15 @@
 <body>
 
 <div id="panel">
+  <!-- Data holds what defines the numbers; Style holds everything cosmetic. -->
+  <div id="panel-tabs" class="seg-toggle">
+    <button data-tab="data" class="active">Data</button>
+    <button data-tab="style">Style</button>
+  </div>
+
   <div id="panel-inner">
 
-    <div class="section">
+    <div class="section" data-tab="data">
       <div class="panel-title">Title</div>
       <div class="field-row">
         <div class="field-label-row">
@@ -22,7 +28,7 @@
       </div>
     </div>
 
-    <div class="section">
+    <div class="section" data-tab="data">
       <div class="panel-title">Bars</div>
       <div id="bars-list"></div>
       <button id="add-bar" class="btn-add">+ Add bar</button>
@@ -30,7 +36,7 @@
         into a label field to append bars.</div>
     </div>
 
-    <div class="section">
+    <div class="section" data-tab="style">
       <div class="panel-title">Colors</div>
       <div class="toggle-row">
         <span class="field-label">Increase</span>
@@ -46,7 +52,7 @@
       </div>
     </div>
 
-    <div class="section">
+    <div class="section" data-tab="style">
       <div class="panel-title">Display</div>
       <div class="toggle-row">
         <span class="field-label">Connectors</span>
@@ -83,14 +89,14 @@
       <div id="display-sliders"></div>
     </div>
 
-    <div class="section">
+    <div class="section" data-tab="data">
       <div class="panel-title">Annotations</div>
       <div id="ann-list"></div>
       <button id="add-arrow" class="btn-add">+ Growth / diff arrow</button>
       <button id="add-line" class="btn-add">+ Value line</button>
     </div>
 
-    <div class="section">
+    <div class="section" data-tab="style">
       <div class="panel-title">Background</div>
       <div class="bg-row">
         <div class="bg-swatch" id="bgSwatch">
@@ -100,12 +106,14 @@
       </div>
     </div>
 
-    <div class="section">
-      <div class="panel-title">Import</div>
-      <button id="toggleImport" class="btn-add">Import JSON…</button>
-      <div id="import-panel" hidden>
-        <textarea id="importText" class="import-textarea" spellcheck="false"
-          placeholder='{
+  </div>
+
+  <!-- Import / export are destinations, not settings — pinned at the bottom so
+       they're always reachable and never in the way of the two tabs above. -->
+  <div id="panel-footer">
+    <div id="import-panel" hidden>
+      <textarea id="importText" class="import-textarea" spellcheck="false"
+        placeholder='{
   "bars": [
     { "label": "FY23",   "type": "total", "value": 100 },
     { "label": "Price",  "type": "delta", "value": 30 },
@@ -113,25 +121,22 @@
     { "label": "FY24",   "type": "subtotal" }
   ]
 }'></textarea>
-        <div class="import-hint">Accepts plain data ("type": "delta" | "subtotal" | "total";
-          subtotal values are computed), or a full config exported below.</div>
-        <div id="importMsg" class="import-msg"></div>
-        <div class="export-btns">
-          <button class="btn-export primary" id="applyImport">Apply</button>
-          <button class="btn-export" id="cancelImport">Cancel</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="panel-title">Export</div>
+      <div class="import-hint">Accepts plain data ("type": "delta" | "subtotal" | "total";
+        subtotal values are computed), or a full config from Export JSON.</div>
+      <div id="importMsg" class="import-msg"></div>
       <div class="export-btns">
-        <button class="btn-export primary" onclick="exportChart(true)">Export PNG</button>
-        <button class="btn-export" onclick="exportChart(false)">Export PNG (transparent)</button>
-        <button class="btn-export" onclick="exportJSON()">Export JSON (data + config)</button>
+        <button class="btn-export primary" id="applyImport">Apply</button>
+        <button class="btn-export" id="cancelImport">Cancel</button>
       </div>
     </div>
-
+    <div class="export-btns">
+      <button class="btn-export primary" onclick="exportChart(true)">Export PNG</button>
+      <button class="btn-export" onclick="exportChart(false)">Transparent</button>
+    </div>
+    <div class="footer-links">
+      <button id="toggleImport" class="btn-link">Import JSON…</button>
+      <button class="btn-link" onclick="exportJSON()">Export JSON</button>
+    </div>
   </div>
 </div>
 
@@ -228,6 +233,24 @@ let annHits = [];
 let annDrag = null;
 let plotMetrics = null;
 
+// Bar rects from the last render (for click + drag hit-testing) and the bar the
+// popover is editing. The value drag in flight pins the axis scale in render()
+// so the bar tracks the cursor instead of chasing a re-niced axis.
+let barHits = [];
+let selectedBar = null;   // bar id, or null
+let valueDrag = null;
+
+// The bar under the cursor. Without a hover cue the click and drag targets give
+// no sign they exist. { barId, grip } — `grip` is true on the value edge, where
+// a press would start a drag.
+let hoverMark = null;
+
+// The floating "+" over the chart and its add-data popover. Declared here (not
+// where they're built) so paint() can reposition without tripping the TDZ.
+let addBtn = null;
+let addPopover = null;
+let positionAddBtn = () => {};
+
 // Switch aspect ratio: resize the canvas backing store and repaint.
 function setAspect(a) {
   if (!ASPECTS[a]) return;
@@ -247,7 +270,10 @@ function render(c, w, h, withBg) {
   // Signed nice scale over everything the bars span (zero always included).
   let lo = 0, hi = 0;
   comps.forEach(cp => { lo = Math.min(lo, cp.y0, cp.y1); hi = Math.max(hi, cp.y0, cp.y1); });
-  const scale = niceScale(lo, hi, 5);
+  // While a bar is being dragged the axis stays pinned to the scale it had when
+  // the drag began — otherwise it re-nices as the value grows and the bar edge
+  // slides back out from under the cursor.
+  const scale = valueDrag ? valueDrag.scale : niceScale(lo, hi, 5);
 
   // Plot rectangle; the bottom strip grows with wrapped bar-label lines.
   let top = 28;
@@ -320,6 +346,7 @@ function render(c, w, h, withBg) {
   // Bars + connectors + value labels
   const barW = slotW * state.barWidth;
   const brokenBars = [];   // bar rects spanning the break band, for the markers
+  if (c === ctx) barHits = [];
   comps.forEach((cp, i) => {
     const center = plotLeft + slotW * (i + 0.5);
     const x = center - barW / 2;
@@ -327,6 +354,30 @@ function render(c, w, h, withBg) {
     const hPx = Math.max(Math.abs(y(cp.y0) - y(cp.y1)), 1);
     c.fillStyle = effColor(cp);
     c.fillRect(x, topPx, barW, hPx);
+
+    // `edgeY` is the edge that encodes the value — the far end of the bar from
+    // its baseline, which is the bottom edge on a downward delta. `base` is the
+    // running total the bar starts from, fixed by everything before it.
+    if (c === ctx) {
+      barHits.push({ x, y: topPx, w: barW, h: hPx, barId: cp.bar.id,
+                     type: cp.bar.type, edgeY: y(cp.y1), base: cp.y0 });
+      // Hover cue and selection outline — preview only, never in exported PNGs.
+      // The soft wash says "editable"; the bright cap on the value edge says
+      // "press here and drag".
+      if (hoverMark && hoverMark.barId === cp.bar.id) {
+        c.fillStyle = 'rgba(255, 255, 255, 0.14)';
+        c.fillRect(x, topPx, barW, hPx);
+        if (hoverMark.grip) {
+          c.fillStyle = 'rgba(255, 255, 255, 0.85)';
+          c.fillRect(x, y(cp.y1) - 1.5, barW, 3);
+        }
+      }
+      if (selectedBar === cp.bar.id) {
+        c.strokeStyle = '#ffffff';
+        c.lineWidth = 2;
+        c.strokeRect(x - 1.5, topPx - 1.5, barW + 3, hPx + 3);
+      }
+    }
     if (ym.active && topPx < ym.bandTop && topPx + hPx > ym.bandBottom)
       brokenBars.push({ bx: x, bw: barW });
 
@@ -386,7 +437,8 @@ function render(c, w, h, withBg) {
   // ── Annotations (CAGR/diff arrows + value lines) — drawn on top ────────────
   if (c === ctx) {
     annHits = [];
-    plotMetrics = { plotTop, plotBottom, plotH, min: scale.min, max: scale.max, step: scale.step, ym };
+    plotMetrics = { plotTop, plotBottom, plotH, min: scale.min, max: scale.max,
+                    step: scale.step, scale, ym };
   }
   const xForI = i => plotLeft + slotW * (i + 0.5);
 
@@ -455,8 +507,18 @@ function render(c, w, h, withBg) {
   });
 }
 
-function renderPreview() {
+// Repaint only. Use this for anything that fires per mouse move — hover cues and
+// in-flight drags — because renderPreview() also writes localStorage, and doing
+// that on every pixel of a drag is both wasteful and needless.
+function paint() {
   render(ctx, CANVAS_W, CANVAS_H, true);
+  if (addBtn) positionAddBtn();
+}
+
+// Repaint and commit. Use this when a change is done: a keystroke, a click, the
+// end of a drag.
+function renderPreview() {
+  paint();
   persist();
 }
 
@@ -696,7 +758,9 @@ function renderBars() {
       valIn.value = bar.value ?? '';
       valIn.placeholder = 'Value';
       valIn.addEventListener('input', e => {
-        bar.value = e.target.value === '' ? null : parseFloat(e.target.value);
+        const v = e.target.value === '' ? null : parseFloat(e.target.value);
+        bar.value = v;
+        syncValueEditors(bar.id, v);   // mirror into the popover if it's open
         refreshComputed();
         renderPreview();
       });
@@ -722,16 +786,25 @@ function renderBars() {
     list.appendChild(card);
   });
 
+  highlightLinkedCard();   // the rebuild dropped the previous highlight
+
   // The annotation cards embed bar pickers — rebuild them whenever the bar
   // list changes shape or order.
   renderAnnotations();
 }
 
-document.getElementById('add-bar').addEventListener('click', () => {
-  state.bars.push(mkBar('New bar', 'delta', 10));
+// Shared by the panel button and the chart's + popover so the two can't drift.
+function addBar(label, type, value) {
+  const bar = mkBar(label || 'New bar', type || 'delta',
+                    type === 'subtotal' ? null : (value ?? 10));
+  state.bars.push(bar);
   renderBars();
+  renderAnnotations();   // the arrow pickers list bar labels
   renderPreview();
-});
+  return bar;
+}
+
+document.getElementById('add-bar').addEventListener('click', () => addBar());
 
 // ── UI: Annotation cards ──────────────────────────────────────────────────────
 // Refresh line-value inputs in place during canvas drags (no rebuild, so an
@@ -885,17 +958,358 @@ window.addEventListener('mousemove', e => {
     ann.value = Math.round(ann.value * 100) / 100;
     refreshAnnInputs();
   }
-  renderPreview();
+  paint();   // mid-drag: the commit happens once, on mouseup
 });
 
-window.addEventListener('mouseup', () => { annDrag = null; });
+// ── Mark popover + direct manipulation ────────────────────────────────────────
+// Click a bar to edit that one number (and its color); drag the edge that
+// carries the value to adjust it continuously. Subtotals are computed from the
+// running total, so they're read-only on the canvas exactly as in the sidebar.
+const preview = document.getElementById('preview');
+const barPopover = document.createElement('div');
+barPopover.className = 'bar-popover';
+barPopover.hidden = true;
+preview.appendChild(barPopover);
+
+let popoverField = null;   // the open popover's value field, for live drag sync
+let suppressClick = false; // a drag that moved must not also open the popover
+
+function barHitAt(e) {
+  const p = canvasPoint(canvas, e, CANVAS_W, CANVAS_H);
+  if (!p) return null;
+  return barHits.find(b => p.x >= b.x && p.x <= b.x + b.w &&
+                           p.y >= b.y && p.y <= b.y + b.h) || null;
+}
+
+// The grip is the value-carrying edge of an editable bar.
+function valueGripAt(e) {
+  const p = canvasPoint(canvas, e, CANVAS_W, CANVAS_H);
+  if (!p) return null;
+  return barHits.find(b => b.type !== 'subtotal' &&
+                           p.x >= b.x - 1 && p.x <= b.x + b.w + 1 &&
+                           Math.abs(p.y - b.edgeY) <= 7) || null;
+}
+
+// Write a value into the sidebar card without rebuilding it (a rebuild would
+// steal focus from whichever field is being typed into) and into the popover.
+function syncValueEditors(barId, value) {
+  const inp = document.querySelector(`input.bar-value[data-bar-id="${barId}"]`);
+  if (inp && !inp.readOnly && document.activeElement !== inp)
+    inp.value = (value === null || value === undefined) ? '' : value;
+  if (popoverField && selectedBar === barId) popoverField.setValue(value);
+}
+
+function highlightLinkedCard() {
+  document.querySelectorAll('#bars-list input.linked-active')
+    .forEach(el => el.classList.remove('linked-active'));
+  if (selectedBar === null) return;
+  const inp = document.querySelector(`input.bar-value[data-bar-id="${selectedBar}"]`);
+  if (!inp) return;
+  inp.classList.add('linked-active');
+  inp.scrollIntoView({ block: 'nearest' });
+}
+
+function closeBarPopover() {
+  if (barPopover.hidden) return;
+  barPopover.hidden = true;
+  selectedBar = null;
+  popoverField = null;
+  highlightLinkedCard();
+  renderPreview();
+}
+
+function openBarPopover(hit, clientX, clientY) {
+  const bar = state.bars.find(b => b.id === hit.barId);
+  if (!bar) return;
+  selectedBar = bar.id;
+
+  barPopover.innerHTML = '';
+  const title = document.createElement('div');
+  title.className = 'bar-popover-title';
+  title.textContent = bar.label || 'Bar';
+
+  // Subtotals are the running total at that point — computed, not entered.
+  const comp  = computeBars().find(cp => cp.bar.id === bar.id);
+  const isSub = bar.type === 'subtotal';
+  const field = valueField(isSub ? 'Total' : 'Value',
+    isSub ? Math.round(comp.y1 * 100) / 100 : bar.value,
+    v => {
+      bar.value = v;
+      syncValueEditors(bar.id, v);
+      refreshComputed();
+      renderPreview();
+    }, { step: 'any' });
+  if (isSub) {
+    field.input.disabled = true;
+    field.input.title = 'Running total (computed)';
+  }
+  popoverField = field;
+
+  const row = document.createElement('div');
+  row.className = 'bar-popover-row';
+  row.appendChild(colorSwatch(effColor(comp), hex => {
+    bar.color = hex;
+    renderBars();
+    renderPreview();
+  }));
+  const reset = document.createElement('button');
+  reset.className = 'btn-export';
+  reset.textContent = 'Auto';
+  reset.title = 'Back to the automatic color (by type/sign)';
+  reset.addEventListener('click', () => {
+    bar.color = null;
+    renderBars();
+    renderPreview();
+    closeBarPopover();
+  });
+  row.appendChild(reset);
+
+  // Structural edit, so removing a step doesn't mean leaving the chart.
+  const actions = document.createElement('div');
+  actions.className = 'bar-popover-row';
+  const removeBar = document.createElement('button');
+  removeBar.className = 'btn-export danger';
+  removeBar.textContent = 'Remove ' + (bar.label || 'bar');
+  removeBar.title = 'Remove this step from the bridge';
+  removeBar.disabled = state.bars.length <= 1;   // mirrors the sidebar's guard
+  removeBar.addEventListener('click', () => {
+    if (state.bars.length <= 1) return;
+    const idx = state.bars.indexOf(bar);
+    if (idx < 0) return;
+    state.bars.splice(idx, 1);
+    closeBarPopover();
+    renderBars();
+    renderPreview();
+  });
+  actions.appendChild(removeBar);
+
+  const hint = document.createElement('div');
+  hint.className = 'popover-hint';
+  hint.textContent = isSub
+    ? 'Computed from the bars before it'
+    : 'Drag the bar’s value edge to adjust · ↑↓ to nudge';
+
+  barPopover.append(title, field, row, actions, hint);
+  barPopover.hidden = false;
+  highlightLinkedCard();
+
+  // Position next to the click, clamped inside the preview pane.
+  const pr = preview.getBoundingClientRect();
+  const px = Math.max(8, Math.min(clientX - pr.left + 12, preview.clientWidth  - barPopover.offsetWidth  - 8));
+  const py = Math.max(8, Math.min(clientY - pr.top  + 12, preview.clientHeight - barPopover.offsetHeight - 8));
+  barPopover.style.left = px + 'px';
+  barPopover.style.top  = py + 'px';
+
+  renderPreview();   // repaint with the selection outline
+}
+
+// Pixel under the cursor → the bar's value. A delta floats on the running total
+// it starts from, so its value is the distance from that base.
+function applyValueDrag(pos) {
+  const bar = state.bars.find(b => b.id === valueDrag.barId);
+  if (!bar || !plotMetrics) return;
+  const level = Math.min(Math.max(plotMetrics.ym.yInv(pos.y), plotMetrics.min), plotMetrics.max);
+  const next = snapToStep(bar.type === 'delta' ? level - valueDrag.base : level,
+                          plotMetrics.step);
+  bar.value = next;
+  syncValueEditors(bar.id, next);
+  refreshComputed();
+  paint();   // mid-drag: the commit happens once, on mouseup
+}
+
+canvas.addEventListener('mousedown', e => {
+  if (annHitAt(e)) return;   // an annotation pill under the cursor wins the press
+  const grip = valueGripAt(e);
+  if (!grip || !plotMetrics) return;
+  e.preventDefault();
+  valueDrag = {
+    barId: grip.barId, base: grip.base,
+    scale: plotMetrics.scale,   // pin the axis for the duration of the drag
+    startY: canvasPoint(canvas, e, CANVAS_W, CANVAS_H).y,
+    moved: false,
+  };
+});
+
+window.addEventListener('mousemove', e => {
+  if (!valueDrag) return;
+  const pos = canvasPoint(canvas, e, CANVAS_W, CANVAS_H);
+  if (!pos) return;
+  if (!valueDrag.moved && Math.abs(pos.y - valueDrag.startY) < 3) return;   // still a click
+  valueDrag.moved = true;
+  applyValueDrag(pos);
+});
+
+// Both drags paint as they go and commit here, once, when the mouse is released.
+window.addEventListener('mouseup', () => {
+  const wasAnnDrag = annDrag !== null;
+  annDrag = null;
+  if (valueDrag) {
+    suppressClick = valueDrag.moved;
+    valueDrag = null;
+    renderPreview();   // repaint with the axis scale released, then commit
+  } else if (wasAnnDrag) {
+    persist();
+  }
+});
+
+canvas.addEventListener('click', e => {
+  if (suppressClick) { suppressClick = false; return; }
+  if (annHitAt(e)) return;
+  const hit = barHitAt(e);
+  if (hit) openBarPopover(hit, e.clientX, e.clientY);
+  else closeBarPopover();
+});
+
+// Dismiss on any press outside the popover. Presses on the canvas are left to
+// the click handler above (hit → move popover, miss → close).
+document.addEventListener('pointerdown', e => {
+  if (barPopover.hidden || barPopover.contains(e.target) || e.target === canvas) return;
+  closeBarPopover();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeBarPopover();
+});
+
+// Two marks are the same when they point at the same bar in the same state, so
+// a repaint only happens when the cue would actually change.
+function setHover(mark) {
+  const a = hoverMark, b = mark;
+  if (a === b || (a && b && a.barId === b.barId && a.grip === b.grip)) return;
+  hoverMark = mark;
+  paint();   // never renderPreview: this fires on every mouse move
+}
 
 canvas.addEventListener('mousemove', e => {
-  if (annDrag) return;
+  if (annDrag || valueDrag) return;
+  // Resolve what's under the cursor once, then use it for both the hover cue
+  // and the cursor.
+  const ann  = annHitAt(e);
+  const grip = ann ? null : valueGripAt(e);
+  const bar  = ann ? null : barHitAt(e);
+
+  setHover(ann ? null
+    : bar  ? { barId: bar.barId, grip: !!grip }
+    : grip ? { barId: grip.barId, grip: true }
+    : null);
+
   const zoomed = /scale\(([\d.]+)\)/.exec(canvas.style.transform || '');
-  canvas.style.cursor = annHitAt(e) ? 'ns-resize'
+  canvas.style.cursor = ann ? 'ns-resize'
+    : grip ? 'ns-resize'
+    : bar ? 'pointer'
     : (zoomed && parseFloat(zoomed[1]) > 1 ? 'grab' : '');
 });
+
+canvas.addEventListener('mouseleave', () => setHover(null));
+
+// ── Add-data popover ──────────────────────────────────────────────────────────
+// The button, positioning and dismissal live in shared.js; this supplies only
+// the form. One dropdown covers both jobs: pick an existing step to edit it, or
+// "+ New step" to append one. A subtotal has no value of its own — it reports
+// the running total — so its value field is disabled either way.
+const NEW_BAR = -1;
+const addDraft = { idx: NEW_BAR, label: '', type: 'delta', value: 10 };
+
+function buildAddForm(popover, { close, field, rebuild }) {
+  const d = addDraft;
+  if (d.idx !== NEW_BAR && d.idx >= state.bars.length) d.idx = NEW_BAR;
+  const isNew = d.idx === NEW_BAR;
+  const target = isNew ? null : state.bars[d.idx];
+
+  const title = document.createElement('div');
+  title.className = 'bar-popover-title';
+  title.textContent = 'Add to chart';
+
+  const body = document.createElement('div');
+  body.className = 'add-body';
+
+  const barSel = document.createElement('select');
+  state.bars.forEach((b, i) => {
+    const o = document.createElement('option');
+    o.value = i;
+    o.textContent = b.label || '—';
+    barSel.appendChild(o);
+  });
+  const newOpt = document.createElement('option');
+  newOpt.value = NEW_BAR;
+  newOpt.textContent = '+ New step…';
+  barSel.appendChild(newOpt);
+  barSel.value = d.idx;
+  barSel.addEventListener('change', () => {
+    d.idx = Number(barSel.value);
+    // Adopt the chosen step's own values, so the form edits what you picked.
+    const b = d.idx === NEW_BAR ? null : state.bars[d.idx];
+    d.label = b ? b.label : '';
+    d.type  = b ? b.type : 'delta';
+    d.value = b ? b.value : 10;
+    rebuild();
+  });
+  body.appendChild(field('Step', barSel));
+
+  const labelIn = document.createElement('input');
+  labelIn.type = 'text';
+  labelIn.value = isNew ? d.label : (target.label ?? '');
+  labelIn.placeholder = 'New bar';
+  labelIn.addEventListener('input', () => { d.label = labelIn.value; });
+  body.appendChild(field('Label', labelIn));
+
+  const type = isNew ? d.type : target.type;
+  body.appendChild(field('Type', makeSegToggle(
+    [{ label: '+/−', value: 'delta' },
+     { label: 'Sub', value: 'subtotal' },
+     { label: 'Total', value: 'total' }],
+    type, false, v => { d.type = v; rebuild(); })));
+
+  const valIn = document.createElement('input');
+  valIn.type = 'number';
+  valIn.placeholder = '—';
+  if (type === 'subtotal') {
+    const comp = target ? computeBars().find(cp => cp.bar.id === target.id) : null;
+    valIn.value = comp ? Math.round(comp.y1 * 100) / 100 : '';
+    valIn.disabled = true;
+    valIn.title = 'Running total (computed)';
+  } else {
+    const cur = isNew ? d.value : target.value;
+    valIn.value = (cur === null || cur === undefined) ? '' : cur;
+    valIn.addEventListener('input', () => {
+      const raw = valIn.value.trim();
+      d.value = raw === '' ? null : parseFloat(raw);
+    });
+  }
+  body.appendChild(field('Value', valIn));
+
+  const commit = document.createElement('button');
+  commit.className = 'btn-export primary';
+  commit.textContent = isNew ? 'Add' : 'Save';
+  commit.addEventListener('click', () => {
+    if (isNew) {
+      addBar(d.label.trim(), d.type, d.value);
+      d.label = '';
+    } else {
+      target.label = d.label.trim() || target.label;
+      target.type  = d.type;
+      target.value = d.type === 'subtotal' ? null : d.value;
+      renderBars();
+      renderAnnotations();
+      renderPreview();
+    }
+    close();
+  });
+
+  const cancel = document.createElement('button');
+  cancel.className = 'btn-export';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', close);
+
+  const buttons = document.createElement('div');
+  buttons.className = 'export-btns';
+  buttons.append(cancel, commit);
+  popover.append(title, body, buttons);
+}
+
+const chartAdd = initChartAdd({ preview, canvas, buildForm: buildAddForm });
+addBtn = chartAdd.button;
+addPopover = chartAdd.popover;
+positionAddBtn = chartAdd.reposition;
 
 // ── Role colors ───────────────────────────────────────────────────────────────
 function buildRoleColors() {
@@ -1077,7 +1491,8 @@ function syncControls() {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
-initPanelSections(STORAGE_KEY, ['Background', 'Import', 'Export']);
+initPanelTabs(STORAGE_KEY);
+initPanelSections(STORAGE_KEY, ['Background']);
 restore();
 renderBars();
 syncControls();

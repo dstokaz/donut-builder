@@ -9,9 +9,15 @@
 <body>
 
 <div id="panel">
+  <!-- Data holds what defines the numbers; Style holds everything cosmetic. -->
+  <div id="panel-tabs" class="seg-toggle">
+    <button data-tab="data" class="active">Data</button>
+    <button data-tab="style">Style</button>
+  </div>
+
   <div id="panel-inner">
 
-    <div class="section">
+    <div class="section" data-tab="data">
       <div class="panel-title">Title</div>
       <div class="field-row">
         <div class="field-label-row">
@@ -30,7 +36,7 @@
       </div>
     </div>
 
-    <div class="section">
+    <div class="section" data-tab="data">
       <div class="panel-title">Series &amp; Points</div>
       <div id="series-list"></div>
       <button id="add-series" class="btn-add">+ Add series</button>
@@ -38,7 +44,7 @@
         — label, x, y, size columns — to append points.</div>
     </div>
 
-    <div class="section">
+    <div class="section" data-tab="style">
       <div class="panel-title">Bubbles</div>
       <div class="toggle-row">
         <span class="field-label">Size dimension (bubbles)</span>
@@ -47,7 +53,7 @@
       <div id="bubble-sliders"></div>
     </div>
 
-    <div class="section">
+    <div class="section" data-tab="style">
       <div class="panel-title">Quadrants</div>
       <div class="toggle-row">
         <span class="field-label">Quadrant lines</span>
@@ -62,7 +68,7 @@
       </div>
     </div>
 
-    <div class="section">
+    <div class="section" data-tab="style">
       <div class="panel-title">Display</div>
       <div class="toggle-row">
         <span class="field-label">Point labels</span>
@@ -87,13 +93,13 @@
       <div id="display-sliders"></div>
     </div>
 
-    <div class="section">
+    <div class="section" data-tab="data">
       <div class="panel-title">Annotations</div>
       <div id="ann-list"></div>
       <button id="add-line" class="btn-add">+ Value line</button>
     </div>
 
-    <div class="section">
+    <div class="section" data-tab="style">
       <div class="panel-title">Background</div>
       <div class="bg-row">
         <div class="bg-swatch" id="bgSwatch">
@@ -103,12 +109,14 @@
       </div>
     </div>
 
-    <div class="section">
-      <div class="panel-title">Import</div>
-      <button id="toggleImport" class="btn-add">Import JSON…</button>
-      <div id="import-panel" hidden>
-        <textarea id="importText" class="import-textarea" spellcheck="false"
-          placeholder='{
+  </div>
+
+  <!-- Import / export are destinations, not settings — pinned at the bottom so
+       they're always reachable and never in the way of the two tabs above. -->
+  <div id="panel-footer">
+    <div id="import-panel" hidden>
+      <textarea id="importText" class="import-textarea" spellcheck="false"
+        placeholder='{
   "series": [
     { "name": "Products", "points": [
       { "label": "Alpha", "x": 12, "y": 34, "size": 40 },
@@ -116,26 +124,23 @@
     ] }
   ]
 }'></textarea>
-        <div class="import-hint">Accepts plain data (x/y required, size and label
-          optional), or a full config exported below. JSON paste is the fastest
-          way to enter many points.</div>
-        <div id="importMsg" class="import-msg"></div>
-        <div class="export-btns">
-          <button class="btn-export primary" id="applyImport">Apply</button>
-          <button class="btn-export" id="cancelImport">Cancel</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="panel-title">Export</div>
+      <div class="import-hint">Accepts plain data (x/y required, size and label
+        optional), or a full config from Export JSON. JSON paste is the fastest
+        way to enter many points.</div>
+      <div id="importMsg" class="import-msg"></div>
       <div class="export-btns">
-        <button class="btn-export primary" onclick="exportChart(true)">Export PNG</button>
-        <button class="btn-export" onclick="exportChart(false)">Export PNG (transparent)</button>
-        <button class="btn-export" onclick="exportJSON()">Export JSON (data + config)</button>
+        <button class="btn-export primary" id="applyImport">Apply</button>
+        <button class="btn-export" id="cancelImport">Cancel</button>
       </div>
     </div>
-
+    <div class="export-btns">
+      <button class="btn-export primary" onclick="exportChart(true)">Export PNG</button>
+      <button class="btn-export" onclick="exportChart(false)">Transparent</button>
+    </div>
+    <div class="footer-links">
+      <button id="toggleImport" class="btn-link">Import JSON…</button>
+      <button class="btn-link" onclick="exportJSON()">Export JSON</button>
+    </div>
   </div>
 </div>
 
@@ -205,6 +210,23 @@ let annHits = [];         // annotation pill rects
 let annDrag = null;
 let plotMetrics = null;   // last preview's scales, for drag mapping
 
+// Bubble circles from the last render (for click + drag hit-testing) and the
+// point the popover is editing. A drag in flight pins both scales in render()
+// so the bubble tracks the cursor instead of chasing re-niced axes.
+let pointHits = [];
+let selectedPoint = null;   // point id, or null
+let pointDrag = null;
+
+// The bubble under the cursor. Without a hover cue the click and drag targets
+// give no sign they exist.
+let hoverMark = null;       // point id, or null
+
+// The floating "+" over the chart and its add-data popover. Declared here (not
+// where they're built) so paint() can reposition without tripping the TDZ.
+let addBtn = null;
+let addPopover = null;
+let positionAddBtn = () => {};
+
 // Switch aspect ratio: resize the canvas backing store and repaint.
 function setAspect(a) {
   if (!ASPECTS[a]) return;
@@ -234,8 +256,11 @@ function render(c, w, h, withBg) {
   const pad = (lo, hi) => { const d = (hi - lo) * 0.05 || 1; return [lo - d, hi + d]; };
   const [xLo, xHi] = pad(Math.min(...xs), Math.max(...xs));
   const [yLo, yHi] = pad(Math.min(...ys), Math.max(...ys));
-  const xScale = niceScale(xLo, xHi, 6);
-  const yScale = niceScale(yLo, yHi, 5);
+  // While a point is being dragged both axes stay pinned to the scales they had
+  // when the drag began — otherwise they re-nice as the point moves and the
+  // bubble slides back out from under the cursor.
+  const xScale = pointDrag ? pointDrag.xScale : niceScale(xLo, xHi, 6);
+  const yScale = pointDrag ? pointDrag.yScale : niceScale(yLo, yHi, 5);
 
   const sizes = state.sizeEnabled ? pts.map(p => Number(p.size)).filter(isFinite) : [];
   const sMin = sizes.length ? Math.min(...sizes) : 0;
@@ -377,7 +402,7 @@ function render(c, w, h, withBg) {
   }
 
   // Points (bubbles) + draggable labels.
-  if (c === ctx) labelHitAreas = [];
+  if (c === ctx) { labelHitAreas = []; pointHits = []; }
   const pf = state.pointFontSize;
   state.series.forEach(s => {
     s.points.forEach(pt => {
@@ -392,6 +417,24 @@ function render(c, w, h, withBg) {
       c.strokeStyle = s.color;
       c.lineWidth = 1.5;
       c.stroke();
+
+      if (c === ctx) {
+        pointHits.push({ x: cx, y: cy, r: Math.max(r, 8), point: pt, series: s });
+        // Hover cue and selection ring — preview only, never in exported PNGs.
+        if (hoverMark === pt.id) {
+          c.beginPath();
+          c.arc(cx, cy, r + 3, 0, Math.PI * 2);
+          c.fillStyle = 'rgba(255, 255, 255, 0.20)';
+          c.fill();
+        }
+        if (selectedPoint === pt.id) {
+          c.beginPath();
+          c.arc(cx, cy, r + 4, 0, Math.PI * 2);
+          c.strokeStyle = '#ffffff';
+          c.lineWidth = 2;
+          c.stroke();
+        }
+      }
 
       if (state.showPointLabels && pt.label) {
         const ox = pt.labelOffset.x, oy = pt.labelOffset.y;
@@ -419,8 +462,13 @@ function render(c, w, h, withBg) {
   // ── Annotations (horizontal value lines) ───────────────────────────────────
   if (c === ctx) {
     annHits = [];
-    plotMetrics = { plotTop, plotBottom, plotH,
-                    yMin: yScale.min, yMax: yScale.max, step: yScale.step };
+    plotMetrics = { plotTop, plotBottom, plotH, plotLeft, plotRight, plotW,
+                    yMin: yScale.min, yMax: yScale.max, step: yScale.step,
+                    xMin: xScale.min, xMax: xScale.max, xStep: xScale.step,
+                    xScale, yScale,
+                    // Pixel → value, for dragging a bubble in both axes.
+                    xInv: p => xScale.min + (p - plotLeft) / plotW * (xScale.max - xScale.min),
+                    yInv: p => yScale.min + (plotBottom - p) / plotH * (yScale.max - yScale.min) };
   }
   state.annotations.forEach(ann => {
     const v = Number(ann.value);
@@ -442,8 +490,18 @@ function render(c, w, h, withBg) {
   });
 }
 
-function renderPreview() {
+// Repaint only. Use this for anything that fires per mouse move — hover cues and
+// in-flight drags — because renderPreview() also writes localStorage, and doing
+// that on every pixel of a drag is both wasteful and needless.
+function paint() {
   render(ctx, CANVAS_W, CANVAS_H, true);
+  if (addBtn) positionAddBtn();
+}
+
+// Repaint and commit. Use this when a change is done: a keystroke, a click, the
+// end of a drag.
+function renderPreview() {
+  paint();
   persist();
 }
 
@@ -628,13 +686,20 @@ function renderSeries() {
     s.points.forEach((pt, pIdx) => {
       const tr = document.createElement('tr');
 
-      const cell = (value, type, onCh, ph) => {
+      // `field` tags the input so the canvas popover and point drags can write
+      // this exact cell without a rebuild (see syncValueEditors).
+      const cell = (value, type, onCh, ph, field) => {
         const td = document.createElement('td');
         const input = document.createElement('input');
         input.type = type;
         input.value = value ?? '';
         if (ph) input.placeholder = ph;
-        input.addEventListener('input', e => { onCh(e.target.value); renderPreview(); });
+        if (field) { input.dataset.pointId = pt.id; input.dataset.field = field; }
+        input.addEventListener('input', e => {
+          onCh(e.target.value);
+          if (field) syncValueEditors(pt);   // mirror into the popover if it's open
+          renderPreview();
+        });
         input.addEventListener('paste', e => {
           const rows = parseTSVBlock(e.clipboardData && e.clipboardData.getData('text'));
           if (rows && pastePointsBlock(s, rows)) e.preventDefault();
@@ -644,10 +709,10 @@ function renderSeries() {
       };
 
       tr.appendChild(cell(pt.label, 'text', v => { pt.label = v; }, 'Point'));
-      tr.appendChild(cell(pt.x, 'number', v => { pt.x = v === '' ? 0 : parseFloat(v); }));
-      tr.appendChild(cell(pt.y, 'number', v => { pt.y = v === '' ? 0 : parseFloat(v); }));
+      tr.appendChild(cell(pt.x, 'number', v => { pt.x = v === '' ? 0 : parseFloat(v); }, null, 'x'));
+      tr.appendChild(cell(pt.y, 'number', v => { pt.y = v === '' ? 0 : parseFloat(v); }, null, 'y'));
       if (state.sizeEnabled)
-        tr.appendChild(cell(pt.size, 'number', v => { pt.size = v === '' ? null : parseFloat(v); }));
+        tr.appendChild(cell(pt.size, 'number', v => { pt.size = v === '' ? null : parseFloat(v); }, null, 'size'));
 
       const delTd = document.createElement('td');
       const delBtn = document.createElement('button');
@@ -681,12 +746,19 @@ function renderSeries() {
   });
 }
 
-document.getElementById('add-series').addEventListener('click', () => {
+// A series with no points can't be seen or clicked, so it starts with one.
+// Shared by the panel button and the chart's + popover so the two can't drift.
+function addSeriesWithPoint(name) {
   const color = PALETTE[state.series.length % PALETTE.length];
-  state.series.push(mkSeries('Series ' + (state.series.length + 1), color, [mkPoint('New point', 0, 0, null)]));
+  const s = mkSeries(name || 'Series ' + (state.series.length + 1), color,
+                     [mkPoint('New point', 0, 0, null)]);
+  state.series.push(s);
   renderSeries();
   renderPreview();
-});
+  return s;
+}
+
+document.getElementById('add-series').addEventListener('click', () => addSeriesWithPoint());
 
 // ── UI: Annotation cards (value lines) ────────────────────────────────────────
 function refreshAnnInputs() {
@@ -749,6 +821,8 @@ function renderAnnotations() {
     card.append(top, row);
     list.appendChild(card);
   });
+
+  highlightLinkedCells();   // the rebuild dropped the previous highlight
 }
 
 document.getElementById('add-line').addEventListener('click', () => {
@@ -816,7 +890,7 @@ canvas.addEventListener('mousemove', e => {
     annDrag.ann.value = Math.round(Math.min(Math.max(raw, plotMetrics.yMin), plotMetrics.yMax) / step) * step;
     annDrag.ann.value = Math.round(annDrag.ann.value * 100) / 100;
     refreshAnnInputs();
-    renderPreview();
+    paint();   // mid-drag: the commit happens once, on mouseup
     return;
   }
   if (dragState) {
@@ -826,24 +900,367 @@ canvas.addEventListener('mousemove', e => {
     if (dragState.moved) {
       dragState.point.labelOffset.x = dragState.origX + dx;
       dragState.point.labelOffset.y = dragState.origY + dy;
-      renderPreview();
+      paint();   // mid-drag: the commit happens once, on mouseup
     }
     return;
   }
-  canvas.style.cursor = annHitAt(pos.x, pos.y) ? 'ns-resize'
-    : hitLabel(pos.x, pos.y) ? 'grab' : 'default';
+  if (pointDrag) return;   // mid-drag: keep the grabbing cursor
+  const ann   = annHitAt(pos.x, pos.y);
+  const label = ann ? null : hitLabel(pos.x, pos.y);
+  const hit   = (ann || label) ? null : pointHitAt(pos.x, pos.y);
+  setHover(hit ? hit.point.id : null);
+  canvas.style.cursor = ann ? 'ns-resize'
+    : label ? 'grab'
+    : hit ? 'grab' : 'default';
 });
 
+// Repaint only when the cue would actually change.
+function setHover(id) {
+  if (hoverMark === id) return;
+  hoverMark = id;
+  paint();   // never renderPreview: this fires on every mouse move
+}
+
+// Every drag paints as it goes and commits here, once, on release.
 canvas.addEventListener('mouseup', () => {
+  const committed = (dragState && dragState.moved) || annDrag;
   dragState = null;
   annDrag = null;
+  if (pointDrag) {
+    // A drag that actually moved must not also open the popover on mouseup.
+    suppressClick = pointDrag.moved;
+    pointDrag = null;
+    renderPreview();   // repaint with the scales released, then commit
+  } else if (committed) {
+    persist();
+  }
 });
 
 canvas.addEventListener('mouseleave', () => {
+  setHover(null);
   dragState = null;
   annDrag = null;
+  if (pointDrag) { pointDrag = null; renderPreview(); }
   canvas.style.cursor = 'default';
 });
+
+// ── Mark popover + direct manipulation ────────────────────────────────────────
+// Click a bubble to edit its coordinates; drag it and both x and y follow the
+// cursor. The popover fields and the sidebar table mirror each other live.
+const preview = document.getElementById('preview');
+const pointPopover = document.createElement('div');
+pointPopover.className = 'bar-popover';
+pointPopover.hidden = true;
+preview.appendChild(pointPopover);
+
+let popoverFields = null;   // { x, y, size } value fields, for live drag sync
+let suppressClick = false;
+
+function pointHitAt(x, y) {
+  // Last drawn wins, so the bubble visually on top is the one you grab.
+  for (let i = pointHits.length - 1; i >= 0; i--) {
+    const h = pointHits[i];
+    if (Math.hypot(x - h.x, y - h.y) <= h.r) return h;
+  }
+  return null;
+}
+
+// Write values into the sidebar cells without rebuilding the table (a rebuild
+// would steal focus from whichever field is being typed into) and into the
+// popover fields.
+function syncValueEditors(pt) {
+  for (const f of ['x', 'y', 'size']) {
+    const inp = document.querySelector(
+      `input[data-point-id="${pt.id}"][data-field="${f}"]`);
+    if (inp && document.activeElement !== inp)
+      inp.value = (pt[f] === null || pt[f] === undefined) ? '' : pt[f];
+    if (popoverFields && popoverFields[f] && selectedPoint === pt.id)
+      popoverFields[f].setValue(pt[f]);
+  }
+}
+
+function highlightLinkedCells() {
+  document.querySelectorAll('input.linked-active')
+    .forEach(el => el.classList.remove('linked-active'));
+  if (selectedPoint === null) return;
+  const cells = document.querySelectorAll(`input[data-point-id="${selectedPoint}"]`);
+  cells.forEach(el => el.classList.add('linked-active'));
+  if (cells[0]) cells[0].scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+function closePointPopover() {
+  if (pointPopover.hidden) return;
+  pointPopover.hidden = true;
+  selectedPoint = null;
+  popoverFields = null;
+  highlightLinkedCells();
+  renderPreview();
+}
+
+function openPointPopover(hit, clientX, clientY) {
+  const pt = hit.point;
+  selectedPoint = pt.id;
+  pointPopover.innerHTML = '';
+
+  const title = document.createElement('div');
+  title.className = 'bar-popover-title';
+  title.textContent = (hit.series.name || 'Series') + ' · ' + (pt.label || 'Point');
+
+  const mk = (label, key, opts) => valueField(label, pt[key], v => {
+    pt[key] = v === null ? (key === 'size' ? null : 0) : v;
+    syncValueEditors(pt);
+    renderPreview();
+  }, { step: 'any', ...opts });
+
+  popoverFields = { x: mk(state.xLabel || 'X', 'x'), y: mk(state.yLabel || 'Y', 'y') };
+  const parts = [title, popoverFields.x, popoverFields.y];
+  if (state.sizeEnabled) {
+    popoverFields.size = mk('Size', 'size', { min: 0 });
+    parts.push(popoverFields.size);
+  }
+
+  // Structural edit, so removing a point doesn't mean leaving the chart.
+  const removeBtn = document.createElement('button');
+  removeBtn.className = 'btn-export danger';
+  removeBtn.textContent = 'Remove ' + (pt.label || 'point');
+  removeBtn.title = 'Remove this point from its series';
+  removeBtn.disabled = hit.series.points.length <= 1;
+  removeBtn.addEventListener('click', () => {
+    const idx = hit.series.points.indexOf(pt);
+    if (idx < 0 || hit.series.points.length <= 1) return;
+    hit.series.points.splice(idx, 1);
+    closePointPopover();
+    renderSeries();
+    renderPreview();
+  });
+  parts.push(removeBtn);
+
+  const hint = document.createElement('div');
+  hint.className = 'popover-hint';
+  hint.textContent = 'Drag the bubble to move it · ↑↓ to nudge';
+  parts.push(hint);
+
+  pointPopover.append(...parts);
+  pointPopover.hidden = false;
+  highlightLinkedCells();
+
+  // Position next to the click, clamped inside the preview pane.
+  const pr = preview.getBoundingClientRect();
+  const ppx = Math.max(8, Math.min(clientX - pr.left + 12, preview.clientWidth  - pointPopover.offsetWidth  - 8));
+  const ppy = Math.max(8, Math.min(clientY - pr.top  + 12, preview.clientHeight - pointPopover.offsetHeight - 8));
+  pointPopover.style.left = ppx + 'px';
+  pointPopover.style.top  = ppy + 'px';
+
+  renderPreview();   // repaint with the selection ring
+}
+
+// The bubble follows the cursor in both axes, snapped onto each axis's grid.
+function applyPointDrag(pos) {
+  if (!plotMetrics) return;
+  const pt = pointDrag.point;
+  pt.x = snapToStep(Math.min(Math.max(plotMetrics.xInv(pos.x), plotMetrics.xMin), plotMetrics.xMax),
+                    plotMetrics.xStep);
+  pt.y = snapToStep(Math.min(Math.max(plotMetrics.yInv(pos.y), plotMetrics.yMin), plotMetrics.yMax),
+                    plotMetrics.step);
+  syncValueEditors(pt);
+  paint();   // mid-drag: the commit happens once, on mouseup
+}
+
+canvas.addEventListener('mousedown', e => {
+  if (dragState || annDrag) return;   // label / annotation grabs claimed it
+  const pos = canvasPos(e);
+  const hit = pointHitAt(pos.x, pos.y);
+  if (!hit || !plotMetrics) return;
+  e.preventDefault();
+  pointDrag = {
+    point: hit.point,
+    xScale: plotMetrics.xScale, yScale: plotMetrics.yScale,   // pin both axes
+    startX: pos.x, startY: pos.y,
+    moved: false,
+  };
+  canvas.style.cursor = 'grabbing';
+});
+
+canvas.addEventListener('mousemove', e => {
+  if (!pointDrag) return;
+  const pos = canvasPos(e);
+  if (!pointDrag.moved &&
+      Math.hypot(pos.x - pointDrag.startX, pos.y - pointDrag.startY) < 3) return;
+  pointDrag.moved = true;
+  applyPointDrag(pos);
+});
+
+canvas.addEventListener('click', e => {
+  if (suppressClick) { suppressClick = false; return; }
+  const pos = canvasPos(e);
+  if (annHitAt(pos.x, pos.y) || hitLabel(pos.x, pos.y)) return;
+  const hit = pointHitAt(pos.x, pos.y);
+  if (hit) openPointPopover(hit, e.clientX, e.clientY);
+  else closePointPopover();
+});
+
+document.addEventListener('pointerdown', e => {
+  if (pointPopover.hidden || pointPopover.contains(e.target) || e.target === canvas) return;
+  closePointPopover();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closePointPopover();
+});
+
+// ── Add-data popover ──────────────────────────────────────────────────────────
+// The button, positioning and dismissal live in shared.js; this supplies only
+// the form. Two modes: Point (a series picker plus a point dropdown whose
+// "+ New point" decides whether the point already exists) and Series.
+const NEW_POINT = -1;
+let addMode = 'point';
+const addDraft = {
+  point:  { seriesId: null, idx: NEW_POINT, label: '', x: '', y: '', size: '' },
+  series: { name: '' },
+};
+
+function buildAddForm(popover, { close, field, rebuild }) {
+  const title = document.createElement('div');
+  title.className = 'bar-popover-title';
+  title.textContent = 'Add to chart';
+
+  const modes = makeSegToggle(
+    [{ label: 'Point',  value: 'point' },
+     { label: 'Series', value: 'series' }],
+    addMode, false,
+    v => { addMode = v; rebuild(); });
+
+  const body = document.createElement('div');
+  body.className = 'add-body';
+
+  const commit = document.createElement('button');
+  commit.className = 'btn-export primary';
+  const cancel = document.createElement('button');
+  cancel.className = 'btn-export';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', close);
+
+  if (addMode === 'point' && state.series.length) {
+    const d = addDraft.point;
+    if (!state.series.some(sr => sr.id === d.seriesId)) d.seriesId = state.series[0].id;
+    const series = state.series.find(sr => sr.id === d.seriesId);
+    if (d.idx !== NEW_POINT && d.idx >= series.points.length) d.idx = NEW_POINT;
+    const isNew = d.idx === NEW_POINT;
+    const target = isNew ? null : series.points[d.idx];
+
+    const seriesSel = document.createElement('select');
+    state.series.forEach(sr => {
+      const o = document.createElement('option');
+      o.value = sr.id;
+      o.textContent = sr.name || 'Series';
+      seriesSel.appendChild(o);
+    });
+    seriesSel.value = d.seriesId;
+    seriesSel.addEventListener('change', () => {
+      d.seriesId = Number(seriesSel.value);
+      d.idx = NEW_POINT;      // point indices are per series
+      rebuild();
+    });
+    body.appendChild(field('Series', seriesSel));
+
+    const pointSel = document.createElement('select');
+    series.points.forEach((pt, i) => {
+      const o = document.createElement('option');
+      o.value = i;
+      o.textContent = pt.label || '—';
+      pointSel.appendChild(o);
+    });
+    const newOpt = document.createElement('option');
+    newOpt.value = NEW_POINT;
+    newOpt.textContent = '+ New point…';
+    pointSel.appendChild(newOpt);
+    pointSel.value = d.idx;
+    pointSel.addEventListener('change', () => {
+      d.idx = Number(pointSel.value);
+      // Adopt the chosen point's own values, so the form edits what you picked.
+      const pt = d.idx === NEW_POINT ? null : series.points[d.idx];
+      d.label = pt ? pt.label : '';
+      d.x = pt ? pt.x : ''; d.y = pt ? pt.y : '';
+      d.size = pt && pt.size !== null && pt.size !== undefined ? pt.size : '';
+      rebuild();
+    });
+    body.appendChild(field('Point', pointSel));
+
+    const labelIn = document.createElement('input');
+    labelIn.type = 'text';
+    labelIn.value = isNew ? d.label : (target.label ?? '');
+    labelIn.placeholder = 'New point';
+    labelIn.addEventListener('input', () => { d.label = labelIn.value; });
+    body.appendChild(field('Label', labelIn));
+
+    const num = (key, label, cur) => {
+      const inp = document.createElement('input');
+      inp.type = 'number';
+      inp.placeholder = '—';
+      inp.value = (cur === null || cur === undefined) ? '' : cur;
+      inp.addEventListener('input', () => { d[key] = inp.value; });
+      body.appendChild(field(label, inp));
+    };
+    num('x', state.xLabel || 'X', isNew ? d.x : target.x);
+    num('y', state.yLabel || 'Y', isNew ? d.y : target.y);
+    if (state.sizeEnabled) num('size', 'Size', isNew ? d.size : target.size);
+
+    const numOr = (v, dflt) => {
+      const n = parseFloat(String(v).trim());
+      return isFinite(n) ? n : dflt;
+    };
+    commit.textContent = isNew ? 'Add' : 'Save';
+    commit.addEventListener('click', () => {
+      const size = String(d.size).trim() === '' ? null : numOr(d.size, null);
+      if (isNew) {
+        series.points.push(mkPoint(d.label.trim() || 'New point',
+                                   numOr(d.x, 0), numOr(d.y, 0), size));
+        d.label = ''; d.x = ''; d.y = ''; d.size = '';
+      } else {
+        target.label = d.label.trim() || target.label;
+        target.x = numOr(d.x, target.x);
+        target.y = numOr(d.y, target.y);
+        if (state.sizeEnabled) target.size = size;
+      }
+      renderSeries();
+      renderPreview();
+      close();
+    });
+
+  } else if (addMode === 'point') {
+    const empty = document.createElement('div');
+    empty.className = 'popover-hint';
+    empty.textContent = 'Add a series first — points belong to one.';
+    body.appendChild(empty);
+    commit.textContent = 'Add';
+    commit.disabled = true;
+
+  } else {
+    const d = addDraft.series;
+    const nameIn = document.createElement('input');
+    nameIn.type = 'text';
+    nameIn.value = d.name;
+    nameIn.placeholder = 'Series ' + (state.series.length + 1);
+    nameIn.addEventListener('input', () => { d.name = nameIn.value; });
+    body.appendChild(field('Name', nameIn));
+
+    commit.textContent = 'Add';
+    commit.addEventListener('click', () => {
+      addSeriesWithPoint(d.name.trim());
+      d.name = '';
+      close();
+    });
+  }
+
+  const buttons = document.createElement('div');
+  buttons.className = 'export-btns';
+  buttons.append(cancel, commit);
+  popover.append(title, modes, body, buttons);
+}
+
+const chartAdd = initChartAdd({ preview, canvas, buildForm: buildAddForm });
+addBtn = chartAdd.button;
+addPopover = chartAdd.popover;
+positionAddBtn = chartAdd.reposition;
 
 // ── Toggles / inputs ──────────────────────────────────────────────────────────
 const bindToggle = (id, key, after) =>
@@ -1033,7 +1450,8 @@ function syncControls() {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
-initPanelSections(STORAGE_KEY, ['Background', 'Import', 'Export']);
+initPanelTabs(STORAGE_KEY);
+initPanelSections(STORAGE_KEY, ['Background']);
 restore();
 renderSeries();
 renderAnnotations();

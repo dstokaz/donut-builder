@@ -9,9 +9,15 @@
 <body>
 
 <div id="panel">
+  <!-- Data holds what defines the numbers; Style holds everything cosmetic. -->
+  <div id="panel-tabs" class="seg-toggle">
+    <button data-tab="data" class="active">Data</button>
+    <button data-tab="style">Style</button>
+  </div>
+
   <div id="panel-inner">
 
-    <div class="section">
+    <div class="section" data-tab="data">
       <div class="panel-title">Segments</div>
       <div id="items-list"></div>
       <button id="add-item-btn" class="btn-add">+ Add segment</button>
@@ -19,7 +25,7 @@
         into a label field to append segments.</div>
     </div>
 
-    <div class="section">
+    <div class="section" data-tab="data">
       <div class="panel-title">Center Text</div>
       <div class="field-row">
         <div class="field-label-row">
@@ -44,7 +50,7 @@
       </div>
     </div>
 
-    <div class="section">
+    <div class="section" data-tab="style">
       <div class="panel-title">Chart</div>
       <div class="slider-row">
         <div class="slider-header">
@@ -99,13 +105,13 @@
       </div>
     </div>
 
-    <div class="section" id="breakoutSection" hidden>
+    <div class="section" id="breakoutSection" hidden data-tab="data">
       <div class="panel-title">Breakout (pie-of-pie)</div>
       <div id="breakout-list"></div>
       <button id="add-breakout-item" class="btn-add">+ Add part</button>
     </div>
 
-    <div class="section">
+    <div class="section" data-tab="style">
       <div class="panel-title">Background</div>
       <div class="bg-row">
         <div class="bg-swatch" id="bgSwatch">
@@ -115,37 +121,36 @@
       </div>
     </div>
 
-    <div class="section">
-      <div class="panel-title">Import</div>
-      <button id="toggleImport" class="btn-add">Import JSON…</button>
-      <div id="import-panel" hidden>
-        <textarea id="importText" class="import-textarea" spellcheck="false"
-          placeholder='{
+  </div>
+
+  <!-- Import / export are destinations, not settings — pinned at the bottom so
+       they're always reachable and never in the way of the two tabs above. -->
+  <div id="panel-footer">
+    <div id="import-panel" hidden>
+      <textarea id="importText" class="import-textarea" spellcheck="false"
+        placeholder='{
   "items": [
     { "label": "Invoice Status", "value": 600 },
     { "label": "Other internal", "pct": 20 },
     { "label": "External", "pct": 20 }
   ]
 }'></textarea>
-        <div class="import-hint">Accepts plain data, or a full config exported below
-          (colors, center text, sizes, background).</div>
-        <div id="importMsg" class="import-msg"></div>
-        <div class="export-btns">
-          <button class="btn-export primary" id="applyImport">Apply</button>
-          <button class="btn-export" id="cancelImport">Cancel</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="panel-title">Export</div>
+      <div class="import-hint">Accepts plain data, or a full config from Export JSON
+        (colors, center text, sizes, background).</div>
+      <div id="importMsg" class="import-msg"></div>
       <div class="export-btns">
-        <button class="btn-export primary" onclick="exportChart(true)">Export PNG</button>
-        <button class="btn-export" onclick="exportChart(false)">Export PNG (transparent)</button>
-        <button class="btn-export" onclick="exportJSON()">Export JSON (data + config)</button>
+        <button class="btn-export primary" id="applyImport">Apply</button>
+        <button class="btn-export" id="cancelImport">Cancel</button>
       </div>
     </div>
-
+    <div class="export-btns">
+      <button class="btn-export primary" onclick="exportChart(true)">Export PNG</button>
+      <button class="btn-export" onclick="exportChart(false)">Transparent</button>
+    </div>
+    <div class="footer-links">
+      <button id="toggleImport" class="btn-link">Import JSON…</button>
+      <button class="btn-link" onclick="exportJSON()">Export JSON</button>
+    </div>
   </div>
 </div>
 
@@ -235,6 +240,16 @@ let centerHitAreas = []; // [{id, left, right, top, bottom}] — center text cli
 let arcHits        = []; // [{id, sRad, mRad, span, rIn, rOut}] — slice click targets
 let donutGeom      = null; // { cx, cy, s } from the last preview render
 
+// The slice under the cursor, and whether the cursor is on its resize boundary.
+// Without a hover cue the click and drag targets give no sign they exist.
+let hoverMark = null;      // { id, grip } | null
+
+// The floating "+" over the chart and its add-data popover. Declared here (not
+// where they're built) so paint() can reposition without tripping the TDZ.
+let addBtn = null;
+let addPopover = null;
+let positionAddBtn = () => {};
+
 function render(c, w, h, withBg) {
   const s  = Math.min(w, h);          // reference size for all proportions
   const hasBreakout = state.items.some(it => it.detail && it.detail.items && it.detail.items.length);
@@ -267,7 +282,7 @@ function render(c, w, h, withBg) {
   const nameFontSz = s * state.nameFontSize / 100;
   const valFontSz  = s * state.valFontSize  / 100;
 
-  if (c === ctx) { arcHits = []; donutGeom = { cx, cy, s }; }
+  if (c === ctx) { arcHits = []; donutGeom = { cx, cy, s, gap: GAP_RAD }; }
 
   // Explode offset: shift a slice radially outward along its mid-angle.
   const explodeOff = (segId, mRad) => {
@@ -339,7 +354,25 @@ function render(c, w, h, withBg) {
       c.lineCap = 'butt';
       c.stroke();
 
-      if (c === ctx) arcHits.push({ id: seg.id, sRad, mRad, span: eRad - sRad, rIn, rOut });
+      if (c === ctx) {
+        arcHits.push({ id: seg.id, sRad, mRad, span: eRad - sRad, rIn, rOut });
+        // Hover cue — preview only, never in exported PNGs. The wash says
+        // "editable"; the bright cap on the trailing edge says "drag to resize".
+        if (hoverMark && hoverMark.id === seg.id) {
+          c.beginPath();
+          c.arc(cx + ox, cy + oy, rMid, sRad, eRad);
+          c.strokeStyle = 'rgba(255, 255, 255, 0.16)';
+          c.lineWidth = ringW;
+          c.stroke();
+          if (hoverMark.grip) {
+            c.beginPath();
+            c.arc(cx + ox, cy + oy, rMid, eRad - 0.02, eRad);
+            c.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+            c.lineWidth = ringW;
+            c.stroke();
+          }
+        }
+      }
       const item = state.items.find(it => it.id === seg.id);
       if (item && item.detail && item.detail.items && item.detail.items.length)
         parentArc = { item, sRad, eRad, mRad, rOut };
@@ -561,8 +594,18 @@ function render(c, w, h, withBg) {
   }
 }
 
-function renderPreview() {
+// Repaint only. Use this for anything that fires per mouse move — hover cues and
+// in-flight drags — because renderPreview() also writes localStorage, and doing
+// that on every pixel of a drag is both wasteful and needless.
+function paint() {
   render(ctx, CANVAS_W, CANVAS_H, true);
+  if (addBtn) positionAddBtn();
+}
+
+// Repaint and commit. Use this when a change is done: a keystroke, a click, the
+// end of a drag.
+function renderPreview() {
+  paint();
   persist();
 }
 
@@ -717,6 +760,7 @@ function renderItems() {
     // Label
     const labelIn = document.createElement('input');
     labelIn.type = 'text';
+    labelIn.className = 'item-label';
     labelIn.value = item.label;
     labelIn.placeholder = 'Label';
     labelIn.dataset.itemId = item.id;
@@ -729,10 +773,15 @@ function renderItems() {
     // Value — text so user can type prefixes like ~
     const valIn = document.createElement('input');
     valIn.type = 'text';
+    // Addressable so the slice popover and boundary drags can write this exact
+    // field without a rebuild (see syncValueEditors).
+    valIn.className = 'item-value';
+    valIn.dataset.itemId = item.id;
     valIn.value = item.value !== null ? item.value : '';
     valIn.placeholder = 'Value';
     valIn.addEventListener('input', e => {
       item.value = e.target.value === '' ? null : e.target.value;
+      syncValueEditors(item);   // mirror into the popover if it's open
       refreshPctFields();
       renderPreview();
     });
@@ -794,16 +843,26 @@ function renderItems() {
     }
   });
 
+  highlightLinkedRow();   // the rebuild dropped the previous highlight
   renderBreakout();
 }
 
 // ── Add item ────────────────────────────────────────────────────────────────
-document.getElementById('add-item-btn').addEventListener('click', () => {
+// Shared by the panel button and the chart's + popover so the two can't drift.
+// A segment with no numeric value falls back to a manual share, which is why a
+// blank value and pct 0 is the neutral default.
+function addItem(label, value, ring) {
   const color = PALETTE[state.items.length % PALETTE.length];
-  state.items.push(mkItem('New segment', null, 0, color));
+  const item = mkItem(label || 'New segment',
+                      (value === null || value === undefined) ? null : value, 0, color);
+  item.ring = state.multiRing ? (ring || 0) : 0;
+  state.items.push(item);
   renderItems();
   renderPreview();
-});
+  return item;
+}
+
+document.getElementById('add-item-btn').addEventListener('click', () => addItem());
 
 // ── Center text ──────────────────────────────────────────────────────────────
 ['centerTitle', 'centerValue', 'centerSub'].forEach(id => {
@@ -896,14 +955,74 @@ slicePopover.className = 'bar-popover';
 slicePopover.hidden = true;
 preview.appendChild(slicePopover);
 
-function closeSlicePopover() { slicePopover.hidden = true; }
+let selectedItem = null;   // the slice the popover is editing
+let popoverField = null;   // its value field, so drags can push values back in
+
+function closeSlicePopover() {
+  slicePopover.hidden = true;
+  selectedItem = null;
+  popoverField = null;
+  highlightLinkedRow();
+}
+
+// ── Chart ⇄ sidebar linking ───────────────────────────────────────────────────
+// The popover and the sidebar row edit the same number, so each has to show the
+// other's changes — written in place, because rebuilding the list would steal
+// focus from whichever field is being typed into. A slice is driven either by a
+// raw value or, when it has none, by a manually entered share.
+function syncValueEditors(item) {
+  const sel = `[data-item-id="${item.id}"]`;
+  if (hasNumericValue(item)) {
+    const inp = document.querySelector(`input.item-value${sel}`);
+    if (inp && document.activeElement !== inp)
+      inp.value = (item.value === null || item.value === undefined) ? '' : item.value;
+  } else {
+    const pctIn = document.querySelector(`.pct-wrap input${sel}`);
+    if (pctIn && document.activeElement !== pctIn)
+      pctIn.value = item.pct !== null ? item.pct : '';
+  }
+  if (popoverField && selectedItem === item)
+    popoverField.setValue(hasNumericValue(item) ? parseValue(item.value) : item.pct);
+}
+
+// Tint the sidebar field behind the slice selected on the canvas.
+function highlightLinkedRow() {
+  document.querySelectorAll('#items-list input.linked-active')
+    .forEach(el => el.classList.remove('linked-active'));
+  if (!selectedItem) return;
+  const sel = `[data-item-id="${selectedItem.id}"]`;
+  const inp = document.querySelector(
+    hasNumericValue(selectedItem) ? `input.item-value${sel}` : `.pct-wrap input${sel}`);
+  if (!inp) return;
+  inp.classList.add('linked-active');
+  inp.scrollIntoView({ block: 'nearest' });
+}
 
 function openSlicePopover(item, clientX, clientY) {
   slicePopover.innerHTML = '';
+  selectedItem = item;
 
   const title = document.createElement('div');
   title.className = 'bar-popover-title';
   title.textContent = item.label || 'Segment';
+
+  // A slice with a numeric value is value-driven; one without is pinned to a
+  // manually entered share, so the field edits whichever actually drives it.
+  const byValue = hasNumericValue(item);
+  const field = byValue
+    ? valueField('Value', parseValue(item.value), v => {
+        item.value = v === null ? null : v;
+        syncValueEditors(item);
+        refreshPctFields();
+        renderPreview();
+      }, { step: 'any' })
+    : valueField('Share', item.pct, v => {
+        item.pct = v === null ? 0 : v;
+        syncValueEditors(item);
+        refreshPctFields();
+        renderPreview();
+      }, { step: 'any', min: 0, max: 100 });
+  popoverField = field;
 
   const row = document.createElement('div');
   row.className = 'bar-popover-row';
@@ -938,8 +1057,31 @@ function openSlicePopover(item, clientX, clientY) {
     closeSlicePopover();
   });
 
-  slicePopover.append(title, row, slider, breakBtn);
+  // Structural edit, so removing a slice doesn't mean leaving the chart.
+  const removeBtn = document.createElement('button');
+  removeBtn.className = 'btn-export danger';
+  removeBtn.textContent = 'Remove ' + (item.label || 'segment');
+  removeBtn.title = 'Remove this segment';
+  removeBtn.disabled = state.items.length <= 1;   // mirrors the sidebar's guard
+  removeBtn.addEventListener('click', () => {
+    if (state.items.length <= 1) return;
+    const idx = state.items.indexOf(item);
+    if (idx < 0) return;
+    state.items.splice(idx, 1);
+    closeSlicePopover();
+    renderItems();
+    renderPreview();
+  });
+
+  const hint = document.createElement('div');
+  hint.className = 'popover-hint';
+  hint.textContent = canResize(item)
+    ? 'Drag the slice’s trailing edge to resize · ↑↓ to nudge'
+    : 'Its share is whatever the other segments leave over';
+
+  slicePopover.append(title, field, row, slider, breakBtn, removeBtn, hint);
   slicePopover.hidden = false;
+  highlightLinkedRow();
 
   // Position next to the click, clamped inside the preview pane.
   const pr = preview.getBoundingClientRect();
@@ -969,7 +1111,110 @@ function arcHitAt(x, y) {
   return null;
 }
 
+// ── Direct manipulation: drag a slice's trailing edge to resize it ────────────
+// Only the dragged slice changes; its ring-mates keep their shares and simply
+// rotate around it, which is how a pie resize should feel.
+let sliceDrag = null;
+let suppressClick = false;
+
+// Shares are computed per ring group (see computeAllSegments), so a resize
+// redistributes only inside that group.
+function ringGroupOf(item) {
+  return state.multiRing
+    ? state.items.filter(it => (it.ring || 0) === (item.ring || 0))
+    : state.items.slice();
+}
+
+// Whether dragging this slice can actually change anything. A slice driven by
+// a value only moves if some other slice in the ring is value-driven too —
+// otherwise it simply absorbs whatever the manual shares leave over, and no
+// value you give it changes its size. Offering no grip says that plainly.
+function canResize(item) {
+  const group = ringGroupOf(item);
+  if (group.length < 2) return false;
+  return hasNumericValue(item)
+    ? group.some(it => it !== item && hasNumericValue(it))
+    : true;
+}
+
+// The grip: within the ring band and within ~12px of arc length of the slice's
+// trailing edge.
+function boundaryGripAt(x, y) {
+  if (!donutGeom) return null;
+  const { cx, cy, s } = donutGeom;
+  for (const a of arcHits) {
+    const item = state.items.find(it => it.id === a.id);
+    if (!item || !canResize(item)) continue;
+    const d = (item.explode || 0) * s * 0.06;
+    const dx = x - (cx + Math.cos(a.mRad) * d);
+    const dy = y - (cy + Math.sin(a.mRad) * d);
+    const rr = Math.hypot(dx, dy);
+    if (rr < a.rIn || rr > a.rOut) continue;
+    let rel = Math.atan2(dy, dx) - (a.sRad + a.span);
+    rel = Math.atan2(Math.sin(rel), Math.cos(rel));   // normalize to (−π, π]
+    if (Math.abs(rel) * rr <= 12) return item;
+  }
+  return null;
+}
+
+// Pointer angle → this slice's share of its ring → back to whichever number
+// actually drives the slice (a raw value, or a manually entered share).
+function applySliceDrag(x, y) {
+  const item = sliceDrag.item;
+  const arc  = arcHits.find(a => a.id === item.id);
+  if (!arc || !donutGeom) return;
+  const { cx, cy, s, gap } = donutGeom;
+  const d = (item.explode || 0) * s * 0.06;
+  const ax = cx + Math.cos(arc.mRad) * d;
+  const ay = cy + Math.sin(arc.mRad) * d;
+
+  // arcHits holds the *drawn* edges, inset by half the slice gap at each end.
+  // The slice truly starts at sRad − gap/2 and truly ends half a gap past the
+  // drawn end, so a pointer sitting on the drawn edge must read as the full
+  // span — otherwise grabbing a boundary nudges the value before you move.
+  let span = Math.atan2(y - ay, x - ax) - (arc.sRad - gap);
+  span = ((span % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+  const f = Math.min(Math.max(span / (2 * Math.PI), 0.005), 0.95);
+
+  // Angular share → the computedPct this slice needs. As soon as any slice in
+  // the ring is value-driven the percentages always total 100 (the value slices
+  // split whatever the manual ones leave), so the target is just f × 100. With
+  // no value slices at all the manual shares total whatever they total, and the
+  // others stay put while this one moves.
+  const group = ringGroupOf(item);
+  const segs  = computeSegments(group);
+  const total = segs.reduce((a, sg) => a + sg.computedPct, 0);
+  const own   = segs.find(sg => sg.id === item.id);
+  const others = total - (own ? own.computedPct : 0);
+  const anyValue = group.some(hasNumericValue);
+  if (!anyValue && !(others > 0)) return;
+  const targetPct = anyValue ? f * 100 : f * others / (1 - f);
+
+  // Manual pct of the *other* slices, and the sum of the other slices' values —
+  // both fixed while this one is dragged.
+  const otherManual = group.reduce((a, it) =>
+    (it === item || hasNumericValue(it)) ? a : a + (parseFloat(it.pct) || 0), 0);
+  const otherValue = group.reduce((a, it) =>
+    (it === item || !hasNumericValue(it)) ? a : a + parseValue(it.value), 0);
+
+  if (hasNumericValue(item)) {
+    // computedPct = value / totalValue × remaining. Solve for this value.
+    const remaining = Math.max(0, 100 - otherManual);
+    if (!(otherValue > 0) || targetPct >= remaining - 0.05) return;
+    item.value = Math.round(targetPct * otherValue / (remaining - targetPct) * 100) / 100;
+  } else {
+    // Leave room for the value slices, which need what the manual ones don't take.
+    const cap = otherValue > 0 ? 100 - otherManual - 0.5 : 100;
+    item.pct = Math.round(Math.min(Math.max(targetPct, 0), cap) * 10) / 10;
+  }
+
+  syncValueEditors(item);
+  refreshPctFields();
+  paint();   // mid-drag: the commit happens once, on mouseup
+}
+
 canvas.addEventListener('click', e => {
+  if (suppressClick) { suppressClick = false; return; }
   const pos = canvasPos(e);
   if (hitLabel(pos.x, pos.y) || hitCenter(pos.x, pos.y)) { closeSlicePopover(); return; }
   const item = arcHitAt(pos.x, pos.y);
@@ -984,6 +1229,110 @@ document.addEventListener('pointerdown', e => {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeSlicePopover();
 });
+
+// ── Add-data popover ──────────────────────────────────────────────────────────
+// The button, positioning and dismissal live in shared.js; this supplies only
+// the form. One dropdown covers both jobs: pick an existing segment to edit it,
+// or "+ New segment" to append one. A segment is driven either by a raw value
+// or, with none, by a manually entered share — the field follows whichever.
+const NEW_SEGMENT = -1;
+const addDraft = { idx: NEW_SEGMENT, label: '', value: '', ring: 0 };
+
+function buildAddForm(popover, { close, field, rebuild }) {
+  const d = addDraft;
+  if (d.idx !== NEW_SEGMENT && d.idx >= state.items.length) d.idx = NEW_SEGMENT;
+  const isNew = d.idx === NEW_SEGMENT;
+  const target = isNew ? null : state.items[d.idx];
+
+  const title = document.createElement('div');
+  title.className = 'bar-popover-title';
+  title.textContent = 'Add to chart';
+
+  const body = document.createElement('div');
+  body.className = 'add-body';
+
+  const segSel = document.createElement('select');
+  state.items.forEach((it, i) => {
+    const o = document.createElement('option');
+    o.value = i;
+    o.textContent = it.label || '—';
+    segSel.appendChild(o);
+  });
+  const newOpt = document.createElement('option');
+  newOpt.value = NEW_SEGMENT;
+  newOpt.textContent = '+ New segment…';
+  segSel.appendChild(newOpt);
+  segSel.value = d.idx;
+  segSel.addEventListener('change', () => {
+    d.idx = Number(segSel.value);
+    // Adopt the chosen segment's own values, so the form edits what you picked.
+    const it = d.idx === NEW_SEGMENT ? null : state.items[d.idx];
+    d.label = it ? it.label : '';
+    d.value = it ? (hasNumericValue(it) ? it.value : (it.pct ?? '')) : '';
+    d.ring  = it ? (it.ring || 0) : 0;
+    rebuild();
+  });
+  body.appendChild(field('Segment', segSel));
+
+  const labelIn = document.createElement('input');
+  labelIn.type = 'text';
+  labelIn.value = isNew ? d.label : (target.label ?? '');
+  labelIn.placeholder = 'New segment';
+  labelIn.addEventListener('input', () => { d.label = labelIn.value; });
+  body.appendChild(field('Label', labelIn));
+
+  // Text, not number: raw values keep prefixes like ~600, as in the sidebar.
+  const byShare = !isNew && !hasNumericValue(target);
+  const valIn = document.createElement('input');
+  valIn.type = 'text';
+  valIn.placeholder = byShare ? '%' : 'Value';
+  valIn.value = isNew ? d.value
+    : (byShare ? (target.pct ?? '') : (target.value ?? ''));
+  valIn.addEventListener('input', () => { d.value = valIn.value; });
+  body.appendChild(field(byShare ? 'Share %' : 'Value', valIn));
+
+  if (state.multiRing) {
+    body.appendChild(field('Ring', makeSegToggle(
+      [{ label: '1', value: 0 }, { label: '2', value: 1 }, { label: '3', value: 2 }],
+      isNew ? d.ring : (target.ring || 0), false,
+      v => { d.ring = v; rebuild(); })));
+  }
+
+  const commit = document.createElement('button');
+  commit.className = 'btn-export primary';
+  commit.textContent = isNew ? 'Add' : 'Save';
+  commit.addEventListener('click', () => {
+    const raw = String(d.value).trim();
+    if (isNew) {
+      addItem(d.label.trim(), raw === '' ? null : raw, d.ring);
+      d.label = ''; d.value = '';
+    } else {
+      target.label = d.label.trim() || target.label;
+      if (byShare) target.pct = raw === '' ? 0 : parseFloat(raw);
+      else target.value = raw === '' ? null : raw;
+      if (state.multiRing) target.ring = d.ring;
+      renderItems();
+      refreshPctFields();
+      renderPreview();
+    }
+    close();
+  });
+
+  const cancel = document.createElement('button');
+  cancel.className = 'btn-export';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', close);
+
+  const buttons = document.createElement('div');
+  buttons.className = 'export-btns';
+  buttons.append(cancel, commit);
+  popover.append(title, body, buttons);
+}
+
+const chartAdd = initChartAdd({ preview, canvas, buildForm: buildAddForm });
+addBtn = chartAdd.button;
+addPopover = chartAdd.popover;
+positionAddBtn = chartAdd.reposition;
 
 // ── Background ────────────────────────────────────────────────────────────────
 const applyBgColor = bindBgControl(state, renderPreview);
@@ -1119,7 +1468,16 @@ canvas.addEventListener('mousedown', e => {
   const pos      = canvasPos(e);
   const item     = hitLabel(pos.x, pos.y);
   const centerId = !item ? hitCenter(pos.x, pos.y) : null;
-  if (!item && !centerId) return;
+  if (!item && !centerId) {
+    // Nothing draggable on top — try the slice-resize grip underneath.
+    const grip = boundaryGripAt(pos.x, pos.y);
+    if (grip) {
+      e.preventDefault();
+      sliceDrag = { item: grip, startX: pos.x, startY: pos.y, moved: false };
+      canvas.style.cursor = 'grabbing';
+    }
+    return;
+  }
   e.preventDefault();
   dragState = {
     item,
@@ -1134,7 +1492,12 @@ canvas.addEventListener('mousedown', e => {
 
 canvas.addEventListener('mousemove', e => {
   const pos = canvasPos(e);
-  if (dragState) {
+  if (sliceDrag) {
+    if (!sliceDrag.moved &&
+        Math.hypot(pos.x - sliceDrag.startX, pos.y - sliceDrag.startY) < 3) return;
+    sliceDrag.moved = true;
+    applySliceDrag(pos.x, pos.y);
+  } else if (dragState) {
     if (dragState.item) {
       const dx = pos.x - dragState.startX;
       const dy = pos.y - dragState.startY;
@@ -1142,20 +1505,45 @@ canvas.addEventListener('mousemove', e => {
       if (dragState.moved) {
         dragState.item.labelOffset.x = dragState.origX + dx;
         dragState.item.labelOffset.y = dragState.origY + dy;
-        renderPreview();
+        paint();   // mid-drag: the commit happens once, on mouseup
       }
     }
   } else {
-    canvas.style.cursor = (hitLabel(pos.x, pos.y) || hitCenter(pos.x, pos.y)) ? 'grab'
-      : arcHitAt(pos.x, pos.y) ? 'pointer' : 'default';
+    const onChrome = hitLabel(pos.x, pos.y) || hitCenter(pos.x, pos.y);
+    const grip = onChrome ? null : boundaryGripAt(pos.x, pos.y);
+    const arc  = onChrome ? null : arcHitAt(pos.x, pos.y);
+    setHover(grip ? { id: grip.id, grip: true }
+      : arc ? { id: arc.id, grip: false }
+      : null);
+    canvas.style.cursor = onChrome ? 'grab'
+      : grip ? 'grab'
+      : arc ? 'pointer' : 'default';
   }
 });
 
+// Two marks are the same when they point at the same slice in the same state,
+// so a repaint only happens when the cue would actually change.
+function setHover(mark) {
+  const a = hoverMark, b = mark;
+  if (a === b || (a && b && a.id === b.id && a.grip === b.grip)) return;
+  hoverMark = mark;
+  paint();   // never renderPreview: this fires on every mouse move
+}
+
 canvas.addEventListener('mouseup', e => {
+  // Both drags paint as they go and commit here, once, on release.
+  if (sliceDrag) {
+    // A resize that actually moved must not also pop the slice popover.
+    suppressClick = sliceDrag.moved;
+    sliceDrag = null;
+    canvas.style.cursor = 'grab';
+    persist();
+  }
   if (!dragState) return;
+  if (dragState.moved) persist();
   if (!dragState.moved) {
     if (dragState.item) {
-      const input = document.querySelector(`input[type="text"][data-item-id="${dragState.item.id}"]`);
+      const input = document.querySelector(`input.item-label[data-item-id="${dragState.item.id}"]`);
       if (input) { input.focus(); input.select(); input.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
     } else if (dragState.centerId) {
       const input = document.getElementById(dragState.centerId);
@@ -1169,8 +1557,10 @@ canvas.addEventListener('mouseup', e => {
 });
 
 canvas.addEventListener('mouseleave', () => {
-  if (dragState) {
+  setHover(null);
+  if (dragState || sliceDrag) {
     dragState = null;
+    sliceDrag = null;
     canvas.style.cursor = 'default';
   }
 });
@@ -1204,7 +1594,8 @@ function syncControls() {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
-initPanelSections(STORAGE_KEY, ['Background', 'Import', 'Export']);
+initPanelTabs(STORAGE_KEY);
+initPanelSections(STORAGE_KEY, ['Background']);
 restore();
 renderItems();
 syncControls();

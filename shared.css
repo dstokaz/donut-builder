@@ -1,16 +1,31 @@
 /* ── Shared dark UI for all chart builders ─────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* The `hidden` attribute only gets `display: none` from the UA stylesheet, and
+   any author `display:` rule outranks it — so every panel/popover we toggle via
+   `el.hidden` (.bar-popover, #import-panel, .field-stack, …) stayed visible.
+   !important restores `hidden` as the authority it's meant to be. */
+[hidden] { display: none !important; }
+
+/* Exactly the viewport, never more: the panel scrolls inside itself and the
+   chart pane stays put. With min-height the body grew past the screen whenever
+   the panel got tall, the whole document scrolled, and #preview centered its
+   chart against a box taller than the viewport — so the chart sat below the
+   fold and drifted as you scrolled. */
 body {
   background: #0e0e0e;
   color: #e0e0e0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 13px;
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;   /* mobile: discount the collapsing browser chrome */
+  overflow: hidden;
   display: flex;
 }
 
 /* ── Left Panel ─────────────────────────────────────── */
+/* The panel itself no longer scrolls — its section list does, so the tab bar
+   stays at the top and the import/export footer stays at the bottom. */
 #panel {
   width: 360px;
   min-width: 360px;
@@ -18,14 +33,58 @@ body {
   border-right: 1px solid #252525;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 #panel-inner {
+  flex: 1;
+  min-height: 0;      /* let it shrink so overflow-y actually engages */
+  overflow-y: auto;
   padding: 10px 20px 24px;
   display: flex;
   flex-direction: column;
 }
+
+/* ── Panel tabs (Data / Style) ─────────────────────────────────── */
+#panel-tabs {
+  flex-shrink: 0;
+  margin: 12px 20px 4px;
+}
+
+/* Show only the active group. A class rather than the `hidden` attribute, so
+   this stays independent of the global [hidden] rule. */
+#panel-inner[data-active-tab="data"]  .section[data-tab="style"],
+#panel-inner[data-active-tab="style"] .section[data-tab="data"] {
+  display: none;
+}
+
+/* ── Panel footer (import / export) ────────────────────────────── */
+#panel-footer {
+  flex-shrink: 0;
+  border-top: 1px solid #252525;
+  padding: 12px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+#panel-footer .export-btns { display: flex; gap: 8px; }
+#panel-footer .export-btns .btn-export { flex: 1; padding: 8px 10px; font-size: 12px; }
+.footer-links {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.btn-link {
+  background: none;
+  border: none;
+  color: #777;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 0;
+  transition: color 0.15s;
+}
+.btn-link:hover { color: #cfe0ff; }
 
 .panel-title {
   font-size: 11px;
@@ -293,6 +352,19 @@ input[type="range"]::-moz-range-thumb {
   color: #7bc97b;
 }
 .btn-export.primary:hover { background: #213221; border-color: #3a6a3a; }
+.btn-export.danger {
+  background: #2a1a1a;
+  border-color: #4a2d2d;
+  color: #e07b7b;
+}
+.btn-export.danger:hover { background: #322121; border-color: #6a3a3a; }
+.btn-export:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: #1e1e1e;
+  border-color: #2a2a2a;
+  color: #e0e0e0;
+}
 
 /* ── Import (paste JSON) ───────────────────────────────────────── */
 #import-panel { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
@@ -321,12 +393,17 @@ input[type="range"]::-moz-range-thumb {
 #preview {
   position: relative;
   flex: 1;
+  min-width: 0;   /* let it shrink instead of forcing the body wider */
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 14px;
-  padding: 32px;
+  /* Asymmetric on purpose. The extra 52px on top is the height of the zoom
+     control plus the flex gap below the chart — offsetting them puts the canvas
+     itself on the pane's centre line, not the canvas+controls group. It also
+     clears the floating tab bar (which ends ~54px down) at any window height. */
+  padding: 84px 32px 32px;
   background: #0e0e0e;
   overflow: hidden;
 }
@@ -371,7 +448,11 @@ input[type="range"]::-moz-range-thumb {
 
 #canvas {
   max-width: 100%;
-  max-height: calc(100vh - 130px);
+  /* Against the pane's content box rather than the viewport, minus the room the
+     zoom control (38px) and the flex gap (14px) need below it. The canvas has an
+     intrinsic ratio, so capping both axes scales it without distortion. */
+  max-height: calc(100% - 52px);
+  min-height: 0;
   border-radius: 10px;
   display: block;
   transition: transform 0.08s ease-out;
@@ -503,7 +584,96 @@ input[type="range"]::-moz-range-thumb {
   align-items: center;
   gap: 8px;
 }
-.bar-popover-row .btn-export { padding: 6px 12px; font-size: 12px; }
+
+/* Floating "+" over the chart's top-right corner — opens the add-data popover.
+   Positioned from JS so it tracks the canvas, which is centred and may be much
+   smaller than the pane. */
+.chart-add-btn {
+  position: absolute;
+  z-index: 11;
+  width: 32px; height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid #2a2a2a;
+  border-radius: 9px;
+  background: #161616;
+  color: #9a9a9a;
+  font-size: 19px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  transition: all 0.15s;
+}
+.chart-add-btn:hover { color: #e0e0e0; background: #1e1e1e; border-color: #444; }
+.chart-add-btn.active { background: #2d3a4d; border-color: #3d5675; color: #cfe0ff; }
+
+.add-popover { width: 232px; gap: 10px; }
+.add-body { display: flex; flex-direction: column; gap: 7px; }
+.add-field {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+.add-field > span {
+  font-size: 11px;
+  font-weight: 500;
+  color: #777;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.add-field input, .add-field select { width: 100%; }
+.add-series-name { display: flex; align-items: center; gap: 6px; color: #aaa; }
+.add-popover .export-btns { display: flex; gap: 8px; }
+.add-popover .export-btns .btn-export { flex: 1; padding: 7px 10px; font-size: 12px; }
+
+/* Number field in the popover: edit the underlying datum, not just its color */
+.value-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: text;
+}
+.value-field > span {
+  font-size: 11px;
+  font-weight: 500;
+  color: #777;
+  min-width: 34px;
+}
+.value-field input[type="number"] {
+  width: 96px;
+  font-variant-numeric: tabular-nums;
+}
+.value-field input[type="number"]:disabled {
+  color: #666;
+  cursor: not-allowed;
+}
+.popover-hint {
+  font-size: 10px;
+  line-height: 1.35;
+  color: #5e5e5e;
+  max-width: 200px;
+}
+
+/* Sidebar cell/card mirroring the mark selected on the canvas */
+.value-matrix td input.linked-active,
+input.linked-active {
+  border-color: #3d5675;
+  background: #182231;
+}
+.bar-popover-row .btn-export {
+  padding: 6px 12px;
+  font-size: 12px;
+  /* The Remove button carries the category name — keep a long one from
+     stretching the popover past the chart. */
+  max-width: 130px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* Value matrix: series rows × category columns */
 .matrix-wrap { overflow-x: auto; }

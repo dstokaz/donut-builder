@@ -159,6 +159,66 @@ function colorSwatch(value, onInput) {
   return wrap;
 }
 
+// A compact number field for the click-a-mark popovers, so a value can be typed
+// exactly instead of only dragged. onInput(number|null) fires on every
+// keystroke; the returned row carries setValue() so a canvas drag can push the
+// live value back into the field (skipped while the field itself has focus, so
+// typing is never fought over). Number spinners are hidden app-wide — ↑/↓ nudge.
+// opts: { step, min, max, width }
+function valueField(label, value, onInput, opts = {}) {
+  const row = document.createElement('label');
+  row.className = 'value-field';
+
+  const name = document.createElement('span');
+  name.textContent = label;
+
+  const input = document.createElement('input');
+  input.type = 'number';
+  if (opts.step != null) input.step = opts.step;
+  if (opts.min  != null) input.min  = opts.min;
+  if (opts.max  != null) input.max  = opts.max;
+  if (opts.width)        input.style.width = opts.width;
+  input.value = (value === null || value === undefined || value === '') ? '' : value;
+  input.addEventListener('input', () => {
+    const raw = input.value.trim();
+    onInput(raw === '' ? null : parseFloat(raw));
+  });
+
+  row.append(name, input);
+  row.input = input;
+  row.setValue = v => {
+    if (document.activeElement === input) return;
+    input.value = (v === null || v === undefined || v === '') ? '' : v;
+  };
+  return row;
+}
+
+// Mouse event → render-space coordinates on a canvas whose displayed size
+// differs from its buffer size. getBoundingClientRect reflects the preview zoom
+// transform, so this stays correct at any zoom level (the scale is uniform).
+function canvasPoint(canvas, e, w, h) {
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  return {
+    x: (e.clientX - rect.left) * (w / rect.width),
+    y: (e.clientY - rect.top)  * (h / rect.height),
+  };
+}
+
+// Snap a dragged value onto a readable grid — a tenth of the axis tick step —
+// so dragging lands on round numbers instead of 137.4182930572.
+function snapToStep(v, step) {
+  const s = (isFinite(step) && step > 0) ? step / 10 : 1;
+  return Math.round(Math.round(v / s) * s * 1e4) / 1e4;
+}
+
+// True when a canvas point is within `slop` px of a bar's draggable top edge.
+// Bars grow upward, so the top edge is the one that means "this value".
+function nearTopEdge(pos, rect, slop = 7) {
+  return pos.x >= rect.x - 1 && pos.x <= rect.x + rect.w + 1 &&
+         Math.abs(pos.y - rect.y) <= slop;
+}
+
 // A segmented toggle: one button per option, the current one highlighted.
 // options: [{label, value}]; onChange(value).
 function makeSegToggle(options, current, disabled, onChange) {
@@ -457,6 +517,121 @@ function initPanelSections(storageKey, collapsedByDefault = []) {
       saveState(KEY, ui);
     });
   });
+}
+
+// ── Add-data affordance ─────────────────────────────────────────────────────
+// A floating "+" over the chart's top-right corner, opening a popover whose
+// form each builder supplies (the data models differ too much to share). An
+// affordance drawn on the chart itself could only ever append an empty datum;
+// a form can ask for everything a new one needs.
+//
+// Everything except the form is shared: the button, keeping it on the canvas,
+// open/close, and dismissal. `buildForm(body, api)` fills the popover body;
+// `api` carries { close, field } — `field` builds a labelled row.
+//
+// Returns { button, popover, reposition, close, rebuild }.
+function initChartAdd({ preview, canvas, buildForm, title = 'Add data' }) {
+  const button = document.createElement('button');
+  button.className = 'chart-add-btn';
+  button.title = title;
+  button.textContent = '+';
+  preview.appendChild(button);
+
+  const popover = document.createElement('div');
+  popover.className = 'bar-popover add-popover';
+  popover.hidden = true;
+  preview.appendChild(popover);
+
+  // Anchor to the canvas, not the pane: the canvas is centred and can be far
+  // narrower than the pane (a 1:1 chart on a wide window), and
+  // getBoundingClientRect reflects the zoom transform, so this stays on the
+  // chart at any zoom. Clamped to the pane, which a zoomed-in canvas overflows.
+  function reposition() {
+    const pr = preview.getBoundingClientRect();
+    const cr = canvas.getBoundingClientRect();
+    if (!cr.width || !pr.width) return;
+    const size = button.offsetWidth || 32;
+    button.style.left = Math.round(Math.min(cr.right - pr.left, pr.width - 8) - size - 14) + 'px';
+    button.style.top  = Math.round(Math.max(cr.top - pr.top, 8) + 14) + 'px';
+  }
+
+  window.addEventListener('resize', reposition);
+  canvas.addEventListener('transitionend', reposition);   // the zoom buttons animate
+  preview.addEventListener('wheel', () => reposition(), { passive: true });
+
+  function close() {
+    popover.hidden = true;
+    button.classList.remove('active');
+  }
+
+  // A labelled control row, matching the panel's field styling.
+  function field(label, control) {
+    const wrap = document.createElement('label');
+    wrap.className = 'add-field';
+    const name = document.createElement('span');
+    name.textContent = label;
+    wrap.append(name, control);
+    return wrap;
+  }
+
+  const api = { close, field, rebuild: () => rebuild() };
+
+  function rebuild() {
+    popover.innerHTML = '';
+    buildForm(popover, api);
+  }
+
+  function open() {
+    rebuild();
+    popover.hidden = false;
+    button.classList.add('active');
+
+    // Hang it under the button, clamped inside the preview pane.
+    const pr = preview.getBoundingClientRect();
+    const br = button.getBoundingClientRect();
+    popover.style.left = Math.round(Math.max(8,
+      Math.min(br.right - pr.left - popover.offsetWidth, pr.width - popover.offsetWidth - 8))) + 'px';
+    popover.style.top = Math.round(Math.max(8,
+      Math.min(br.bottom - pr.top + 8, pr.height - popover.offsetHeight - 8))) + 'px';
+    popover.querySelector('input, select')?.focus();
+  }
+
+  button.addEventListener('click', () => (popover.hidden ? open() : close()));
+
+  document.addEventListener('pointerdown', e => {
+    if (popover.hidden || popover.contains(e.target) || button.contains(e.target)) return;
+    close();
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+
+  reposition();
+  return { button, popover, reposition, close, rebuild };
+}
+
+// Two groups of sections in one panel: `data` (what defines the numbers) and
+// `style` (everything cosmetic), so only half the controls are on screen at a
+// time. Sections declare their group with data-tab; the tab bar's buttons carry
+// the same attribute. Kept in its own storage key rather than sharing
+// initPanelSections' — both hold an in-memory copy of their object, so a shared
+// key would let whichever saved last clobber the other's state.
+function initPanelTabs(storageKey) {
+  const tabs  = document.getElementById('panel-tabs');
+  const inner = document.getElementById('panel-inner');
+  if (!tabs || !inner) return;
+
+  const KEY = storageKey + '-tab';
+  const buttons = [...tabs.querySelectorAll('button[data-tab]')];
+  if (!buttons.length) return;
+
+  const activate = name => {
+    if (!buttons.some(b => b.dataset.tab === name)) name = buttons[0].dataset.tab;
+    inner.dataset.activeTab = name;
+    buttons.forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+    saveState(KEY, name);
+  };
+
+  buttons.forEach(b => b.addEventListener('click', () => activate(b.dataset.tab)));
+  activate(loadState(KEY) || buttons[0].dataset.tab);
 }
 
 // ── Chart navigation ────────────────────────────────────────────────────────

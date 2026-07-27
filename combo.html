@@ -9,9 +9,16 @@
 <body>
 
 <div id="panel">
+  <!-- Data holds what defines the numbers; Style holds everything cosmetic.
+       Splitting them roughly halves what's on screen at any moment. -->
+  <div id="panel-tabs" class="seg-toggle">
+    <button data-tab="data" class="active">Data</button>
+    <button data-tab="style">Style</button>
+  </div>
+
   <div id="panel-inner">
 
-    <div class="section">
+    <div class="section" data-tab="data">
       <div class="panel-title">Title</div>
       <div class="field-row">
         <div class="field-label-row">
@@ -22,26 +29,26 @@
       </div>
     </div>
 
-    <div class="section">
+    <div class="section" data-tab="data">
       <div class="panel-title">Categories (X axis)</div>
       <div id="cat-list"></div>
       <button id="add-cat" class="btn-add">+ Add category</button>
     </div>
 
-    <div class="section">
+    <div class="section" data-tab="data">
       <div class="panel-title">Series</div>
       <div id="series-list"></div>
       <button id="add-series" class="btn-add">+ Add series</button>
     </div>
 
-    <div class="section">
+    <div class="section" data-tab="data">
       <div class="panel-title">Values</div>
       <div class="matrix-wrap"><div id="matrix"></div></div>
       <div class="import-hint">Tip: click a cell and paste a block straight from
         Excel / Sheets — categories extend to fit.</div>
     </div>
 
-    <div class="section">
+    <div class="section" data-tab="style">
       <div class="panel-title">Axis</div>
       <div class="toggle-row">
         <span class="field-label">Dual axis (left + right)</span>
@@ -61,7 +68,7 @@
       </div>
     </div>
 
-    <div class="section">
+    <div class="section" data-tab="style">
       <div class="panel-title">Display</div>
       <div class="field-stack">
         <span class="field-label">Bar mode</span>
@@ -94,14 +101,14 @@
       <div id="display-sliders"></div>
     </div>
 
-    <div class="section">
+    <div class="section" data-tab="data">
       <div class="panel-title">Annotations</div>
       <div id="ann-list"></div>
       <button id="add-arrow" class="btn-add">+ Growth / diff arrow</button>
       <button id="add-line" class="btn-add">+ Value line</button>
     </div>
 
-    <div class="section">
+    <div class="section" data-tab="style">
       <div class="panel-title">Background</div>
       <div class="bg-row">
         <div class="bg-swatch" id="bgSwatch">
@@ -111,37 +118,36 @@
       </div>
     </div>
 
-    <div class="section">
-      <div class="panel-title">Import</div>
-      <button id="toggleImport" class="btn-add">Import JSON…</button>
-      <div id="import-panel" hidden>
-        <textarea id="importText" class="import-textarea" spellcheck="false"
-          placeholder='{
+  </div>
+
+  <!-- Import / export are destinations, not settings — pinned at the bottom so
+       they're always reachable and never in the way of the two tabs above. -->
+  <div id="panel-footer">
+    <div id="import-panel" hidden>
+      <textarea id="importText" class="import-textarea" spellcheck="false"
+        placeholder='{
   "categories": ["Q1", "Q2", "Q3", "Q4"],
   "series": [
     { "name": "Revenue", "values": [120, 150, 170, 140] },
     { "name": "Profit",  "values": [40, 55, 60, 52] }
   ]
 }'></textarea>
-        <div class="import-hint">Accepts plain data, or a full config exported below
-          (colors, sizes, background, layout).</div>
-        <div id="importMsg" class="import-msg"></div>
-        <div class="export-btns">
-          <button class="btn-export primary" id="applyImport">Apply</button>
-          <button class="btn-export" id="cancelImport">Cancel</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="panel-title">Export</div>
+      <div class="import-hint">Accepts plain data, or a full config from Export JSON
+        (colors, sizes, background, layout).</div>
+      <div id="importMsg" class="import-msg"></div>
       <div class="export-btns">
-        <button class="btn-export primary" onclick="exportChart(true)">Export PNG</button>
-        <button class="btn-export" onclick="exportChart(false)">Export PNG (transparent)</button>
-        <button class="btn-export" onclick="exportJSON()">Export JSON (data + config)</button>
+        <button class="btn-export primary" id="applyImport">Apply</button>
+        <button class="btn-export" id="cancelImport">Cancel</button>
       </div>
     </div>
-
+    <div class="export-btns">
+      <button class="btn-export primary" onclick="exportChart(true)">Export PNG</button>
+      <button class="btn-export" onclick="exportChart(false)">Transparent</button>
+    </div>
+    <div class="footer-links">
+      <button id="toggleImport" class="btn-link">Import JSON…</button>
+      <button class="btn-link" onclick="exportJSON()">Export JSON</button>
+    </div>
   </div>
 </div>
 
@@ -233,10 +239,28 @@ const TICKS = 5;
 const canvas = document.getElementById('canvas');
 let ctx      = setupCanvas(canvas, CANVAS_W, CANVAS_H);
 
-// Bar rectangles from the last render (render coordinates), for click hit-testing,
-// and the bar currently being recolored via the popover (null = none).
+// Bar rectangles and line-point circles from the last render (render
+// coordinates), for click hit-testing, and the mark currently selected in the
+// popover (null = none).
 let barHits = [];
+let pointHits = [];
 let selectedBar = null;   // { seriesId, ci }
+
+// The value drag in flight: { seriesId, ci, axis, stack, leftMax, rightMax,
+// moved }. Non-null pins the axis scale in render() for the duration.
+let valueDrag = null;
+
+// The mark under the cursor. This is what makes the chart feel live: without it
+// none of the click and drag targets announce themselves until you happen to
+// find them. { kind: 'bar' | 'point', seriesId, ci, grip } — `grip` is true when
+// the cursor is on the value edge, i.e. when a press would start a drag.
+let hoverMark = null;
+
+// The floating "+" over the chart and its add-data popover. Declared here (not
+// where they're built) so paint() can reposition the button without tripping
+// over the temporal dead zone.
+let addBtn = null;
+let addPopover = null;
 
 // Annotation pill rects from the last preview render (for drag hit-testing),
 // the annotation drag in flight, and the last preview's plot metrics (so drag
@@ -276,7 +300,15 @@ function render(c, w, h, withBg) {
   else if (stacked) leftMax = niceMax(Math.max(stackSumMax(),
                                                rawMaxFor(leftList.filter(s => s.kind === 'line'))));
   else              leftMax = axisMaxFor(leftList);
-  const rightMax = axisMaxFor(rightList);
+  let rightMax = axisMaxFor(rightList);
+
+  // While a mark is being dragged the axis stays pinned to the scale it had
+  // when the drag began. Without this the axis re-nices as the value grows, the
+  // mark slides back under the cursor, and the chart appears to fight the drag.
+  if (valueDrag) {
+    leftMax  = valueDrag.leftMax;
+    rightMax = valueDrag.rightMax;
+  }
 
   // Legend metrics (computed up front so the plot can reserve space for it).
   const lf = state.legendFontSize;
@@ -417,6 +449,20 @@ function render(c, w, h, withBg) {
 
   const scaleFor = s => (effAxis(s) === 'right' && state.dualAxis) ? rightMax : leftMax;
 
+  // Hover cue — preview only, like the selection outline below. The soft wash
+  // says "this datum is editable"; the bright cap on the value edge says "press
+  // here and drag". Without these the chart gives no sign it can be touched.
+  const drawHover = (s, ci, bx, by, bw, bh) => {
+    if (c !== ctx || !hoverMark || hoverMark.kind !== 'bar') return;
+    if (hoverMark.seriesId !== s.id || hoverMark.ci !== ci) return;
+    c.fillStyle = 'rgba(255, 255, 255, 0.14)';
+    c.fillRect(bx, by, bw, bh);
+    if (hoverMark.grip) {
+      c.fillStyle = 'rgba(255, 255, 255, 0.85)';
+      c.fillRect(bx, by - 1, bw, 3);
+    }
+  };
+
   // Selection outline while the color popover is open — preview only, never in
   // exported PNGs (those render into an offscreen context).
   const drawSelection = (s, ci, bx, by, bw, bh) => {
@@ -428,6 +474,7 @@ function render(c, w, h, withBg) {
   };
 
   barHits = [];
+  pointHits = [];
   const brokenBars = [];   // bar rects spanning the break band, for the markers
   if (!stacked) {
     // Bars (grouped side-by-side within each slot). Each bar keeps a constant
@@ -457,7 +504,9 @@ function render(c, w, h, withBg) {
         if (yLeft.active && effAxis(s) === 'left' && by < yLeft.bandTop) brokenBars.push({ bx, bw });
         c.fillStyle = color;
         c.fillRect(bx, by, bw, bh);
-        barHits.push({ x: bx, y: by, w: bw, h: bh, seriesId: s.id, ci });
+        barHits.push({ x: bx, y: by, w: bw, h: bh, seriesId: s.id, ci,
+                       axis: effAxis(s), stack: null });
+        drawHover(s, ci, bx, by, bw, bh);
         drawSelection(s, ci, bx, by, bw, bh);
 
         if (s.showLabels)
@@ -492,7 +541,12 @@ function render(c, w, h, withBg) {
         const color = barColor(s, ci);
         c.fillStyle = color;
         c.fillRect(bx, by, groupW, bh);
-        barHits.push({ x: bx, y: by, w: groupW, h: bh, seriesId: s.id, ci });
+        // `below`/`others` let a drag on this segment's top edge solve back for
+        // the segment's own value: the top edge is a cumulative total (or, in
+        // 100% mode, a cumulative share), not the value itself.
+        barHits.push({ x: bx, y: by, w: groupW, h: bh, seriesId: s.id, ci,
+                       axis: 'left', stack: { below: cum - v, others: sum - v } });
+        drawHover(s, ci, bx, by, groupW, bh);
         drawSelection(s, ci, bx, by, groupW, bh);
 
         // Per-segment label, centered inside the segment — drawn only when the
@@ -577,15 +631,33 @@ function render(c, w, h, withBg) {
     c.stroke();
 
     // Points + value labels
-    pts.forEach(p => {
+    pts.forEach((p, ci) => {
       if (!p) return;
+      const pr = state.lineWidth * 1.4;
       c.beginPath();
-      c.arc(p.x, p.y, state.lineWidth * 1.4, 0, Math.PI * 2);
+      c.arc(p.x, p.y, pr, 0, Math.PI * 2);
       c.fillStyle = s.color;
       c.fill();
+      // Grab radius is padded to a comfortable target on thin lines.
+      pointHits.push({ x: p.x, y: p.y, r: Math.max(pr + 4, 9), seriesId: s.id, ci,
+                       axis: effAxis(s) });
+      if (c === ctx && hoverMark && hoverMark.kind === 'point' &&
+          hoverMark.seriesId === s.id && hoverMark.ci === ci) {
+        c.beginPath();
+        c.arc(p.x, p.y, pr + 5, 0, Math.PI * 2);
+        c.fillStyle = 'rgba(255, 255, 255, 0.20)';
+        c.fill();
+      }
+      if (c === ctx && selectedBar && selectedBar.seriesId === s.id && selectedBar.ci === ci) {
+        c.beginPath();
+        c.arc(p.x, p.y, pr + 3.5, 0, Math.PI * 2);
+        c.strokeStyle = '#ffffff';
+        c.lineWidth = 2;
+        c.stroke();
+      }
       if (s.showLabels)
         drawValueLabel(c, (s.prefix || '') + fmtNum(p.v) + (s.suffix || ''),
-                       p.x, p.y - state.lineWidth * 1.4 - 3, s.color, state.valueFontSize);
+                       p.x, p.y - pr - 3, s.color, state.valueFontSize);
     });
   });
 
@@ -699,8 +771,18 @@ function render(c, w, h, withBg) {
   });
 }
 
-function renderPreview() {
+// Repaint only. Use this for anything that fires per mouse move — hover cues and
+// in-flight drags — because renderPreview() also writes localStorage, and doing
+// that on every pixel of a drag is both wasteful and needless.
+function paint() {
   render(ctx, CANVAS_W, CANVAS_H, true);
+  if (addBtn) positionAddBtn();
+}
+
+// Repaint and commit. Use this when a change is done: a keystroke, a click, the
+// end of a drag.
+function renderPreview() {
+  paint();
   persist();
 }
 
@@ -885,13 +967,35 @@ function renderCategories() {
   });
 }
 
-document.getElementById('add-cat').addEventListener('click', () => {
-  state.categories.push('Cat ' + (state.categories.length + 1));
-  state.series.forEach(s => { s.values.push(null); s.overrides.push(null); });
+// Appending a category means extending every series in step. `values` is an
+// optional Map of series id → value so the chart's add popover can supply a
+// whole column at once. Shared with the panel button so the two can't drift.
+function addCategory(name, values) {
+  state.categories.push(name || 'Cat ' + (state.categories.length + 1));
+  state.series.forEach(s => {
+    const v = values ? values.get(s.id) : undefined;
+    s.values.push(v === undefined ? null : v);
+    s.overrides.push(null);
+  });
   renderCategories();
   renderMatrix();
   renderPreview();
-});
+}
+
+// Creating a series has to backfill it to the current category count.
+function addSeries(name, kind, axis) {
+  const color = PALETTE[state.series.length % PALETTE.length];
+  const s = mkSeries(name || 'Series ' + (state.series.length + 1),
+                     color, kind || 'bar', axis || 'left', []);
+  alignValues(s);
+  state.series.push(s);
+  renderSeries();
+  renderMatrix();
+  renderPreview();
+  return s;
+}
+
+document.getElementById('add-cat').addEventListener('click', () => addCategory());
 
 // ── UI: Series cards ──────────────────────────────────────────────────────────
 function renderSeries() {
@@ -979,15 +1083,7 @@ function renderSeries() {
   });
 }
 
-document.getElementById('add-series').addEventListener('click', () => {
-  const color = PALETTE[state.series.length % PALETTE.length];
-  const s = mkSeries('Series ' + (state.series.length + 1), color, 'bar', 'left', []);
-  alignValues(s);
-  state.series.push(s);
-  renderSeries();
-  renderMatrix();
-  renderPreview();
-});
+document.getElementById('add-series').addEventListener('click', () => addSeries());
 
 // ── UI: Value matrix (series rows × category columns) ──────────────────────────
 
@@ -1049,10 +1145,16 @@ function renderMatrix() {
       const td = document.createElement('td');
       const input = document.createElement('input');
       input.type = 'number';
+      // Addressable so the canvas popover and value drags can write this exact
+      // cell without a rebuild (see syncValueEditors).
+      input.dataset.seriesId = s.id;
+      input.dataset.ci = ci;
       input.value = (s.values[ci] === null || s.values[ci] === undefined) ? '' : s.values[ci];
       input.addEventListener('input', e => {
         const raw = e.target.value;
-        s.values[ci] = raw === '' ? null : parseFloat(raw);
+        const v = raw === '' ? null : parseFloat(raw);
+        s.values[ci] = v;
+        syncValueEditors(s.id, ci, v);   // mirror into the popover if it's open
         renderPreview();   // no rebuild — keep cell focus
       });
       input.addEventListener('paste', e => {
@@ -1069,10 +1171,39 @@ function renderMatrix() {
   });
   table.appendChild(tbody);
   host.appendChild(table);
+  highlightLinkedCell();   // the rebuild dropped the previous highlight
 
   // The annotation cards embed category/series pickers — rebuild them whenever
   // the data shape changes (renderMatrix runs on every such change).
   renderAnnotations();
+}
+
+// ── Chart ⇄ sidebar linking ───────────────────────────────────────────────────
+// The canvas popover and the sidebar matrix edit the same numbers, so each has
+// to show the other's changes. Both write the value in place rather than
+// re-rendering their host — a rebuild would steal focus from whichever field is
+// being typed into.
+function syncValueEditors(seriesId, ci, value) {
+  const cell = document.querySelector(
+    `#matrix input[data-series-id="${seriesId}"][data-ci="${ci}"]`);
+  if (cell && document.activeElement !== cell)
+    cell.value = (value === null || value === undefined) ? '' : value;
+  if (popoverField && selectedBar &&
+      selectedBar.seriesId === seriesId && selectedBar.ci === ci)
+    popoverField.setValue(value);
+}
+
+// Tint the sidebar cell behind the mark selected on the canvas, and scroll it
+// into view, so it's obvious which number the popover is editing.
+function highlightLinkedCell() {
+  document.querySelectorAll('#matrix input.linked-active')
+    .forEach(el => el.classList.remove('linked-active'));
+  if (!selectedBar) return;
+  const cell = document.querySelector(
+    `#matrix input[data-series-id="${selectedBar.seriesId}"][data-ci="${selectedBar.ci}"]`);
+  if (!cell) return;
+  cell.classList.add('linked-active');
+  cell.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
 // ── UI: Annotation cards ──────────────────────────────────────────────────────
@@ -1358,20 +1489,24 @@ function buildSliders() {
 // ── Background ────────────────────────────────────────────────────────────────
 const applyBgColor = bindBgControl(state, renderPreview);
 
-// ── Bar color popover ─────────────────────────────────────────────────────────
-// Click a bar on the chart to recolor just that bar (one series at one
-// category). A small popover with a color swatch and a Reset button opens next
-// to it; Escape or clicking anywhere else dismisses it.
+// ── Mark popover ──────────────────────────────────────────────────────────────
+// Click a bar or a line point to edit that one datum: its value (live, straight
+// into state) and — for bars — its color. Escape or a click elsewhere dismisses
+// it. The value field is mirrored by the sidebar matrix via syncValueEditors.
 const preview = document.getElementById('preview');
 const barPopover = document.createElement('div');
 barPopover.className = 'bar-popover';
 barPopover.hidden = true;
 preview.appendChild(barPopover);
 
+let popoverField = null;   // the open popover's value field, for live drag sync
+
 function closeBarPopover() {
   if (barPopover.hidden) return;
   barPopover.hidden = true;
   selectedBar = null;
+  popoverField = null;
+  highlightLinkedCell();
   render(ctx, CANVAS_W, CANVAS_H, true);   // repaint without the selection outline
 }
 
@@ -1385,24 +1520,78 @@ function openBarPopover(hit, clientX, clientY) {
   title.className = 'bar-popover-title';
   title.textContent = (s.name || 'Series') + ' · ' + (state.categories[hit.ci] || '—');
 
-  const row = document.createElement('div');
-  row.className = 'bar-popover-row';
-  const swatch = colorSwatch(barColor(s, hit.ci), hex => {
-    s.overrides[hit.ci] = hex;
+  const field = valueField('Value', s.values[hit.ci], v => {
+    s.values[hit.ci] = v;
+    syncValueEditors(s.id, hit.ci, v);
     renderPreview();
-  });
-  const reset = document.createElement('button');
-  reset.className = 'btn-export';
-  reset.textContent = 'Reset';
-  reset.title = 'Back to the series color';
-  reset.addEventListener('click', () => {
-    s.overrides[hit.ci] = null;
+  }, { step: 'any' });
+  popoverField = field;
+
+  const hint = document.createElement('div');
+  hint.className = 'popover-hint';
+  hint.textContent = s.kind === 'line'
+    ? 'Drag the point to adjust · ↑↓ to nudge'
+    : 'Drag the bar’s top edge to adjust · ↑↓ to nudge';
+
+  // Per-bar color override only exists for bars — a line point takes the
+  // series color, which the sidebar owns.
+  const parts = [title, field];
+  if (s.kind !== 'line') {
+    const row = document.createElement('div');
+    row.className = 'bar-popover-row';
+    const swatch = colorSwatch(barColor(s, hit.ci), hex => {
+      s.overrides[hit.ci] = hex;
+      renderPreview();
+    });
+    const reset = document.createElement('button');
+    reset.className = 'btn-export';
+    reset.textContent = 'Reset';
+    reset.title = 'Back to the series color';
+    reset.addEventListener('click', () => {
+      s.overrides[hit.ci] = null;
+      renderPreview();
+      closeBarPopover();
+    });
+    row.append(swatch, reset);
+    parts.push(row);
+  }
+
+  // Structural edits, so removing data doesn't mean leaving the chart. Clear is
+  // the per-datum delete; Remove drops the whole category from every series.
+  const actions = document.createElement('div');
+  actions.className = 'bar-popover-row';
+  const clear = document.createElement('button');
+  clear.className = 'btn-export';
+  clear.textContent = 'Clear';
+  clear.title = 'Empty this value, keeping the category';
+  clear.addEventListener('click', () => {
+    s.values[hit.ci] = null;
+    syncValueEditors(s.id, hit.ci, null);
     renderPreview();
     closeBarPopover();
   });
-  row.append(swatch, reset);
-  barPopover.append(title, row);
+
+  const removeCat = document.createElement('button');
+  removeCat.className = 'btn-export danger';
+  removeCat.textContent = 'Remove ' + (state.categories[hit.ci] || 'category');
+  removeCat.title = 'Remove this category from every series';
+  // Mirrors the delete button in renderCategories, including its last-one guard.
+  removeCat.disabled = state.categories.length <= 1;
+  removeCat.addEventListener('click', () => {
+    if (state.categories.length <= 1) return;
+    state.categories.splice(hit.ci, 1);
+    state.series.forEach(sr => { sr.values.splice(hit.ci, 1); sr.overrides.splice(hit.ci, 1); });
+    closeBarPopover();
+    renderCategories();
+    renderMatrix();
+    renderPreview();
+  });
+  actions.append(clear, removeCat);
+  parts.push(actions, hint);
+
+  barPopover.append(...parts);
   barPopover.hidden = false;
+  highlightLinkedCell();
 
   // Position next to the click, clamped inside the preview pane.
   const pr = preview.getBoundingClientRect();
@@ -1415,24 +1604,88 @@ function openBarPopover(hit, clientX, clientY) {
 }
 
 // Map a mouse event to render coordinates and find the bar under it, if any.
-// getBoundingClientRect reflects the visual zoom transform, so dividing by it
-// works at any zoom level (the scale is uniform).
 function barHitAt(e) {
-  const rect = canvas.getBoundingClientRect();
-  if (!rect.width || !rect.height) return null;
-  const x = (e.clientX - rect.left) * (CANVAS_W / rect.width);
-  const y = (e.clientY - rect.top)  * (CANVAS_H / rect.height);
-  return barHits.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) || null;
+  const p = canvasPoint(canvas, e, CANVAS_W, CANVAS_H);
+  if (!p) return null;
+  return barHits.find(b => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) || null;
+}
+
+// Map a mouse event to a line point, if the cursor is within its grab radius.
+function pointHitAt(e) {
+  const p = canvasPoint(canvas, e, CANVAS_W, CANVAS_H);
+  if (!p) return null;
+  return pointHits.find(pt => Math.hypot(p.x - pt.x, p.y - pt.y) <= pt.r) || null;
 }
 
 // Map a mouse event to render coordinates and find the annotation pill under it.
 function annHitAt(e) {
-  const rect = canvas.getBoundingClientRect();
-  if (!rect.width || !rect.height) return null;
-  const x = (e.clientX - rect.left) * (CANVAS_W / rect.width);
-  const y = (e.clientY - rect.top)  * (CANVAS_H / rect.height);
-  return annHits.find(a => x >= a.x && x <= a.x + a.w && y >= a.y && y <= a.y + a.h) || null;
+  const p = canvasPoint(canvas, e, CANVAS_W, CANVAS_H);
+  if (!p) return null;
+  return annHits.find(a => p.x >= a.x && p.x <= a.x + a.w && p.y >= a.y && p.y <= a.y + a.h) || null;
 }
+
+// ── Direct manipulation: drag a mark to change its value ──────────────────────
+// A grip is a line point (anywhere on the dot) or a bar's top edge — the edge
+// that encodes the value. Points win over bars because they're drawn on top.
+function valueGripAt(e) {
+  const pt = pointHitAt(e);
+  if (pt) return pt;
+  const p = canvasPoint(canvas, e, CANVAS_W, CANVAS_H);
+  if (!p) return null;
+  return barHits.find(b => nearTopEdge(p, b)) || null;
+}
+
+// Pixel under the cursor → the dragged series' value at that category, written
+// straight into state so the chart, the popover and the sidebar all follow.
+function applyValueDrag(pos) {
+  const s = state.series.find(sr => sr.id === valueDrag.seriesId);
+  if (!s || !plotMetrics) return;
+  const right = valueDrag.axis === 'right' && state.dualAxis && plotMetrics.rightMax > 0;
+  const m       = right ? plotMetrics.yRight : plotMetrics.yLeft;
+  const axisMax = right ? plotMetrics.rightMax : plotMetrics.leftMax;
+  const level = Math.min(Math.max(m.yInv(pos.y), 0), axisMax);
+  const stack = valueDrag.stack;
+
+  let next;
+  if (stack && state.barMode === 'stacked100') {
+    // The top edge reads as a cumulative *share*. Hold the other segments
+    // fixed and solve for this one: f = (below + v) / (below + v + others).
+    const f = Math.min(Math.max(level / 100, 0), 0.98);
+    if (!(stack.others > 0)) return;        // a lone segment is always 100%
+    next = (f * stack.others) / (1 - f) - stack.below;
+  } else if (stack) {
+    next = level - stack.below;             // top edge is a cumulative total
+  } else {
+    next = level;
+  }
+
+  next = Math.max(snapToStep(next, axisMax / TICKS), 0);
+  s.values[valueDrag.ci] = next;
+  syncValueEditors(s.id, valueDrag.ci, next);
+  paint();   // mid-drag: the commit happens once, on mouseup
+}
+
+canvas.addEventListener('mousedown', e => {
+  if (annHitAt(e)) return;   // an annotation pill under the cursor wins the press
+  const grip = valueGripAt(e);
+  if (!grip || !plotMetrics) return;
+  e.preventDefault();
+  valueDrag = {
+    seriesId: grip.seriesId, ci: grip.ci, axis: grip.axis, stack: grip.stack || null,
+    leftMax: plotMetrics.leftMax, rightMax: plotMetrics.rightMax,   // pin the scale
+    startY: canvasPoint(canvas, e, CANVAS_W, CANVAS_H).y,
+    moved: false,
+  };
+});
+
+window.addEventListener('mousemove', e => {
+  if (!valueDrag) return;
+  const pos = canvasPoint(canvas, e, CANVAS_W, CANVAS_H);
+  if (!pos) return;
+  if (!valueDrag.moved && Math.abs(pos.y - valueDrag.startY) < 3) return;   // still a click
+  valueDrag.moved = true;
+  applyValueDrag(pos);
+});
 
 // Drag an annotation pill: arrows move their height (yOffset), value lines
 // track the axis value under the cursor.
@@ -1470,28 +1723,71 @@ window.addEventListener('mousemove', e => {
     ann.value = Math.round(ann.value * 100) / 100;
     refreshAnnInputs();
   }
-  renderPreview();
+  paint();   // mid-drag: the commit happens once, on mouseup
 });
 
-window.addEventListener('mouseup', () => { annDrag = null; });
+// A drag that actually moved must not also fire the popover on mouseup.
+let suppressClick = false;
+
+// Both drags paint as they go and commit here, once, when the mouse is released.
+window.addEventListener('mouseup', () => {
+  const wasAnnDrag = annDrag !== null;
+  annDrag = null;
+  if (valueDrag) {
+    suppressClick = valueDrag.moved;
+    valueDrag = null;
+    renderPreview();   // repaint with the axis scale released, then commit
+  } else if (wasAnnDrag) {
+    persist();
+  }
+});
 
 canvas.addEventListener('click', e => {
-  if (annHitAt(e)) return;   // annotation grabs win over the recolor popover
-  const hit = barHitAt(e);
+  if (suppressClick) { suppressClick = false; return; }
+  if (annHitAt(e)) return;   // annotation grabs win over the mark popover
+  const hit = pointHitAt(e) || barHitAt(e);
   if (hit) openBarPopover(hit, e.clientX, e.clientY);
   else closeBarPopover();
 });
 
+// Two marks are the same when they point at the same datum in the same state,
+// so a repaint only happens when the cue would actually change.
+const sameMark = (a, b) =>
+  a === b || (!!a && !!b && a.kind === b.kind && a.seriesId === b.seriesId &&
+              a.ci === b.ci && a.grip === b.grip);
+
+function setHover(mark) {
+  if (sameMark(hoverMark, mark)) return;
+  hoverMark = mark;
+  paint();   // never renderPreview: this fires on every mouse move
+}
+
 canvas.addEventListener('mousemove', e => {
-  if (annDrag) return;   // mid-drag: keep the drag cursor
-  // Pointer over annotations, then bars; otherwise fall back to the zoom pan
-  // cursor ('grab' when zoomed in — shared.js only re-applies it on zoom
-  // changes, so restore it here).
+  if (annDrag || valueDrag) return;   // mid-drag: keep the drag cursor
+  // Resolve what's under the cursor once, then use it for both the hover cue
+  // and the cursor. Pointer over annotations, then value grips, then bars;
+  // otherwise fall back to the zoom pan cursor ('grab' when zoomed in —
+  // shared.js only re-applies it on zoom changes, so restore it here).
+  const ann   = annHitAt(e);
+  const grip  = ann ? null : valueGripAt(e);
+  const point = ann ? null : pointHitAt(e);
+  const bar   = ann ? null : barHitAt(e);
+
+  setHover(
+    ann          ? null
+    : point      ? { kind: 'point', seriesId: point.seriesId, ci: point.ci, grip: true }
+    : bar        ? { kind: 'bar', seriesId: bar.seriesId, ci: bar.ci, grip: !!grip }
+    : grip       ? { kind: 'bar', seriesId: grip.seriesId, ci: grip.ci, grip: true }
+    : null);
+
   const zoomed = /scale\(([\d.]+)\)/.exec(canvas.style.transform || '');
-  canvas.style.cursor = annHitAt(e) ? 'ns-resize'
-    : barHitAt(e) ? 'pointer'
+  canvas.style.cursor = ann ? 'ns-resize'
+    : grip ? 'ns-resize'
+    : (bar || point) ? 'pointer'
     : (zoomed && parseFloat(zoomed[1]) > 1 ? 'grab' : '');
 });
+
+canvas.addEventListener('mouseleave', () => setHover(null));
 
 // Dismiss on any press outside the popover. Presses on the canvas are left to
 // the click handler above (hit → move popover, miss → close).
@@ -1502,6 +1798,165 @@ document.addEventListener('pointerdown', e => {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeBarPopover();
 });
+
+// ── Add-data popover ──────────────────────────────────────────────────────────
+// The button, positioning and dismissal live in shared.js; this supplies only
+// the form. Two modes: Data (a period is a column of values — the dropdown's
+// "+ New period" decides whether that column already exists) and Series.
+let addMode = 'data';
+// Held outside the form so switching modes doesn't discard what you've typed —
+// makeSegToggle repaints its buttons by rebuilding, so the form is rebuilt too.
+// `data.ci` is a category index, or NEW_PERIOD for the "+ New period" option:
+// adding a period and filling one are the same form, differing only in whether
+// the column already exists.
+const NEW_PERIOD = -1;
+const addDraft = {
+  data:   { ci: NEW_PERIOD, name: '', values: new Map() },
+  series: { name: '', kind: 'bar', axis: 'left' },
+};
+
+function buildAddForm(popover, { close: closeAddPopover, field: addField, rebuild: buildAddForm }) {
+  const title = document.createElement('div');
+  title.className = 'bar-popover-title';
+  title.textContent = 'Add to chart';
+
+  const modes = makeSegToggle(
+    [{ label: 'Data',   value: 'data' },
+     { label: 'Series', value: 'series' }],
+    addMode, false,
+    v => { addMode = v; buildAddForm(); });
+
+  const body = document.createElement('div');
+  body.className = 'add-body';
+
+  const commit = document.createElement('button');
+  commit.className = 'btn-export primary';
+  commit.textContent = 'Add';
+  const cancel = document.createElement('button');
+  cancel.className = 'btn-export';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', closeAddPopover);
+
+  if (addMode === 'data') {
+    // One form for both jobs: a period is always a column of values, and the
+    // only difference between adding one and filling one is whether the column
+    // already exists — which the dropdown decides.
+    const d = addDraft.data;
+    if (d.ci !== NEW_PERIOD && d.ci >= state.categories.length) d.ci = NEW_PERIOD;
+    const isNew = d.ci === NEW_PERIOD;
+
+    const periodSel = document.createElement('select');
+    state.categories.forEach((cat, i) => {
+      const o = document.createElement('option');
+      o.value = i;
+      o.textContent = cat || '—';
+      periodSel.appendChild(o);
+    });
+    const newOpt = document.createElement('option');
+    newOpt.value = NEW_PERIOD;
+    newOpt.textContent = '+ New period…';
+    periodSel.appendChild(newOpt);
+    periodSel.value = d.ci;
+    periodSel.addEventListener('change', () => {
+      d.ci = Number(periodSel.value);
+      d.values = new Map();   // the entries described the period you just left
+      buildAddForm();
+    });
+    body.appendChild(addField('Period', periodSel));
+
+    if (isNew) {
+      const nameIn = document.createElement('input');
+      nameIn.type = 'text';
+      nameIn.value = d.name;
+      nameIn.placeholder = 'Cat ' + (state.categories.length + 1);
+      nameIn.addEventListener('input', () => { d.name = nameIn.value; });
+      body.appendChild(addField('Name', nameIn));
+    }
+
+    // Only touched fields are committed, so an existing period's untouched
+    // series keep their values — and clearing a field is an explicit null.
+    state.series.forEach(s => {
+      const inp = document.createElement('input');
+      inp.type = 'number';
+      inp.placeholder = '—';
+      const cur = isNew ? undefined : s.values[d.ci];
+      if (d.values.has(s.id)) {
+        const v = d.values.get(s.id);
+        inp.value = v === null ? '' : v;
+      } else if (cur !== null && cur !== undefined) {
+        inp.value = cur;
+      }
+      inp.addEventListener('input', () => {
+        const raw = inp.value.trim();
+        d.values.set(s.id, raw === '' ? null : parseFloat(raw));
+      });
+      const dot = document.createElement('span');
+      dot.className = 'matrix-dot';
+      dot.style.background = s.color;
+      const nm = document.createElement('span');
+      nm.className = 'add-series-name';
+      nm.append(dot, document.createTextNode(s.name || 'Series'));
+      const row = document.createElement('label');
+      row.className = 'add-field';
+      row.append(nm, inp);
+      body.appendChild(row);
+    });
+
+    commit.textContent = isNew ? 'Add' : 'Save';
+    commit.addEventListener('click', () => {
+      if (isNew) {
+        addCategory(d.name.trim(), d.values);
+        d.name = '';
+      } else {
+        d.values.forEach((v, id) => {
+          const s = state.series.find(sr => sr.id === id);
+          if (!s) return;
+          s.values[d.ci] = v;
+          syncValueEditors(s.id, d.ci, v);
+        });
+        renderPreview();
+      }
+      d.values = new Map();
+      closeAddPopover();
+    });
+
+  } else if (addMode === 'series') {
+    const d = addDraft.series;
+    const nameIn = document.createElement('input');
+    nameIn.type = 'text';
+    nameIn.value = d.name;
+    nameIn.placeholder = 'Series ' + (state.series.length + 1);
+    nameIn.addEventListener('input', () => { d.name = nameIn.value; });
+    body.appendChild(addField('Name', nameIn));
+
+    body.appendChild(addField('Type', makeSegToggle(
+      [{ label: 'Bar', value: 'bar' }, { label: 'Line', value: 'line' }],
+      d.kind, false, v => { d.kind = v; buildAddForm(); })));
+
+    // The right axis only exists in dual-axis mode, so don't offer it otherwise.
+    body.appendChild(addField('Axis', makeSegToggle(
+      [{ label: 'Left', value: 'left' }, { label: 'Right', value: 'right' }],
+      state.dualAxis ? d.axis : 'left', !state.dualAxis,
+      v => { d.axis = v; buildAddForm(); })));
+
+    commit.addEventListener('click', () => {
+      addSeries(d.name.trim(), d.kind, state.dualAxis ? d.axis : 'left');
+      d.name = '';
+      closeAddPopover();
+    });
+
+  }
+
+  const buttons = document.createElement('div');
+  buttons.className = 'export-btns';
+  buttons.append(cancel, commit);
+  popover.append(title, modes, body, buttons);
+}
+
+const chartAdd = initChartAdd({ preview, canvas, buildForm: buildAddForm });
+addBtn = chartAdd.button;
+addPopover = chartAdd.popover;
+const positionAddBtn = chartAdd.reposition;
 
 // ── Export ────────────────────────────────────────────────────────────────────
 function exportChart(withBg) {
@@ -1616,7 +2071,8 @@ function applyImportData(data) {
 initImportPanel(applyImportData);
 
 // ── Init ──────────────────────────────────────────────────────────────────────
-initPanelSections(STORAGE_KEY, ['Background', 'Import', 'Export']);
+initPanelTabs(STORAGE_KEY);
+initPanelSections(STORAGE_KEY, ['Background']);
 restore();
 state.series.forEach(alignValues);   // also sizes the default series' overrides
 
