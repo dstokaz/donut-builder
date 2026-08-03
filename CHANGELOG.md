@@ -1,5 +1,25 @@
 # Changelog
 
+## [2026-07-27] — Import / export move to a chart toolbar
+
+### Changed
+- **Import and export now sit in a toolbar across the top of the chart**, not in
+  a footer at the bottom of the settings panel. Getting a chart out is the point
+  of the tool, so the controls belong where you look first. `Export ▾` opens a
+  menu of the three formats; `Import` opens the paste panel beside it
+- The chart-type tabs move into that toolbar and lose their floating pill,
+  reading as a flat row on the left with the actions on the right
+- The panel footer is gone, giving the section list back its height. Each action
+  now has exactly one home
+
+The toolbar is absolutely positioned rather than an in-flow child: `#preview`
+centres its children, so a fourth one in that flow would have pulled the chart
+off its centre line. Its 84px top padding already cleared a bar this tall, so
+the canvas centring is untouched — and the menus hang off a fixed corner, so CSS
+alone positions them, unlike the `+` which has to track a zoomable canvas.
+
+---
+
 ## [2026-07-27] — Workspace pattern across every builder
 
 Round 2: donut, waterfall and scatter get what combo got, adapted to each data

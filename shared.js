@@ -303,6 +303,57 @@ function initImportPanel(applyFn) {
   });
 }
 
+// Export / import menus in the chart toolbar. Only one may be open at a time,
+// and both dismiss on Escape or a press outside — matching the popovers already
+// on the chart. The import panel's own open/close stays in initImportPanel;
+// this keeps the pair mutually exclusive and the buttons' state in sync.
+function initChartMenus() {
+  const actions = document.getElementById('chart-actions');
+  if (!actions) return;
+
+  const exportBtn   = document.getElementById('exportMenuBtn');
+  const exportMenu  = document.getElementById('export-menu');
+  const importBtn   = document.getElementById('toggleImport');
+  const importPanel = document.getElementById('import-panel');
+
+  const sync = () => {
+    if (exportBtn && exportMenu)   exportBtn.classList.toggle('active', !exportMenu.hidden);
+    if (importBtn && importPanel)  importBtn.classList.toggle('active', !importPanel.hidden);
+  };
+
+  const closeAll = () => {
+    if (exportMenu)  exportMenu.hidden = true;
+    if (importPanel) importPanel.hidden = true;
+    sync();
+  };
+
+  if (exportBtn && exportMenu) {
+    exportBtn.addEventListener('click', () => {
+      const wasClosed = exportMenu.hidden;
+      closeAll();
+      exportMenu.hidden = !wasClosed;
+      sync();
+    });
+    // Picking a format runs the export (its own onclick) and dismisses the menu.
+    exportMenu.querySelectorAll('.menu-item')
+      .forEach(item => item.addEventListener('click', closeAll));
+  }
+
+  // initImportPanel and its Cancel button toggle the panel directly, and both
+  // are wired before this runs, so re-sync after any click in the toolbar
+  // rather than trying to intercept them.
+  actions.addEventListener('click', () => {
+    if (importPanel && !importPanel.hidden && exportMenu) exportMenu.hidden = true;
+    sync();
+  });
+
+  document.addEventListener('pointerdown', e => {
+    if (actions.contains(e.target)) return;
+    closeAll();
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAll(); });
+}
+
 // Convert a #RRGGBB hex color to an rgba() string at the given alpha (0–1).
 function hexToRgba(hex, alpha) {
   const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
@@ -741,6 +792,7 @@ function initChartZoom() {
 function initShared() {
   initChartTabs();
   initChartZoom();
+  initChartMenus();
 }
 
 if (document.readyState === 'loading')

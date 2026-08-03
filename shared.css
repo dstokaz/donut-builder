@@ -58,34 +58,6 @@ body {
   display: none;
 }
 
-/* ── Panel footer (import / export) ────────────────────────────── */
-#panel-footer {
-  flex-shrink: 0;
-  border-top: 1px solid #252525;
-  padding: 12px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-#panel-footer .export-btns { display: flex; gap: 8px; }
-#panel-footer .export-btns .btn-export { flex: 1; padding: 8px 10px; font-size: 12px; }
-.footer-links {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-}
-.btn-link {
-  background: none;
-  border: none;
-  color: #777;
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 500;
-  padding: 2px 0;
-  transition: color 0.15s;
-}
-.btn-link:hover { color: #cfe0ff; }
-
 .panel-title {
   font-size: 11px;
   font-weight: 600;
@@ -408,30 +380,43 @@ input[type="range"]::-moz-range-thumb {
   overflow: hidden;
 }
 
-/* Chart-type switcher: floating pill bar centered over the preview */
-.chart-tabs {
+/* Toolbar across the top of the chart: chart tabs left, actions right.
+   Deliberately absolute rather than an in-flow flex child — #preview centres
+   its children, so a fourth child in that flow would drag the chart off its
+   centre line. #preview's 84px top padding already clears this bar. */
+#chart-toolbar {
   position: absolute;
-  top: 16px; left: 50%;
-  transform: translateX(-50%);
+  top: 0; left: 0; right: 0;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 14px;
+  background: #0e0e0e;
+  border-bottom: 1px solid #1c1c1c;
+  z-index: 13;
+}
+
+/* Chart-type switcher, flat inside the toolbar */
+.chart-tabs {
   display: flex;
   align-items: center;
   gap: 2px;
-  background: #161616;
-  border: 1px solid #252525;
-  border-radius: 10px;
-  padding: 4px;
-  z-index: 10;
+  min-width: 0;
+  overflow: hidden;
 }
 .chart-tab {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 6px 14px;
+  padding: 6px 12px;
   border-radius: 7px;
   color: #888;
   text-decoration: none;
   font-size: 13px;
   font-weight: 500;
+  white-space: nowrap;
   transition: all 0.15s;
 }
 .chart-tab:hover { color: #e0e0e0; background: #1e1e1e; }
@@ -445,6 +430,87 @@ input[type="range"]::-moz-range-thumb {
   border-radius: 7px 0 0 7px;
 }
 .chart-tab.home:hover { color: #aaa; background: none; }
+
+/* Export / import. Anchored to a fixed corner of a full-width bar, so CSS alone
+   positions the menus — unlike .chart-add-btn, which has to track a centred and
+   zoomable canvas from JS. */
+#chart-actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.toolbar-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid #252525;
+  border-radius: 7px;
+  background: #161616;
+  color: #bbb;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.toolbar-btn:hover { color: #e8e8e8; background: #1e1e1e; border-color: #3a3a3a; }
+.toolbar-btn.active { background: #2d3a4d; border-color: #3d5675; color: #cfe0ff; }
+.toolbar-btn .caret { font-size: 9px; opacity: 0.7; }
+
+/* Both menus hang from the toolbar's right edge, on the same surface as the
+   on-chart popovers. #preview clips its overflow, so they scroll internally
+   rather than disappearing off a short window. */
+#export-menu,
+#chart-actions #import-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 14;
+  background: #161616;
+  border: 1px solid #2a2a2a;
+  border-radius: 10px;
+  padding: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+}
+#export-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 208px;
+}
+.menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  color: #ddd;
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.menu-item:hover { background: #1e1e1e; color: #fff; }
+/* Separated from the items so it reads as a note, not a fourth choice. */
+.menu-note {
+  margin-top: 4px;
+  padding: 8px 10px 2px;
+  border-top: 1px solid #232323;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: #6a6a6a;
+}
+/* The base #import-panel rule adds a margin-top for its old home in the panel;
+   here the offset comes from `top` instead. */
+#chart-actions #import-panel { width: 340px; margin-top: 0; }
 
 #canvas {
   max-width: 100%;

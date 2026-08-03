@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Waterfall Builder</title>
-<link rel="stylesheet" href="shared.css?v=2">
+<link rel="stylesheet" href="shared.css?v=3">
 </head>
 <body>
 
@@ -108,12 +108,27 @@
 
   </div>
 
-  <!-- Import / export are destinations, not settings — pinned at the bottom so
-       they're always reachable and never in the way of the two tabs above. -->
-  <div id="panel-footer">
-    <div id="import-panel" hidden>
-      <textarea id="importText" class="import-textarea" spellcheck="false"
-        placeholder='{
+</div>
+
+<div id="preview">
+  <!-- Import / export live at the top of the chart: getting a chart out is the
+       point of the tool, so the controls sit where you look first rather than in
+       a corner of the settings panel. -->
+  <div id="chart-toolbar">
+    <nav class="chart-tabs"></nav>
+    <div id="chart-actions">
+      <button id="exportMenuBtn" class="toolbar-btn">Export <span class="caret">▼</span></button>
+      <button id="toggleImport" class="toolbar-btn">Import</button>
+      <div id="export-menu" hidden>
+        <button class="menu-item" onclick="exportChart(true)">PNG</button>
+        <button class="menu-item" onclick="exportChart(false)">PNG · transparent background</button>
+        <button class="menu-item" onclick="exportJSON()">JSON · data + config</button>
+        <div class="menu-note">Charts autosave in this browser only.
+          Export JSON to keep one or move it elsewhere.</div>
+      </div>
+      <div id="import-panel" hidden>
+        <textarea id="importText" class="import-textarea" spellcheck="false"
+          placeholder='{
   "bars": [
     { "label": "FY23",   "type": "total", "value": 100 },
     { "label": "Price",  "type": "delta", "value": 30 },
@@ -121,31 +136,20 @@
     { "label": "FY24",   "type": "subtotal" }
   ]
 }'></textarea>
-      <div class="import-hint">Accepts plain data ("type": "delta" | "subtotal" | "total";
-        subtotal values are computed), or a full config from Export JSON.</div>
-      <div id="importMsg" class="import-msg"></div>
-      <div class="export-btns">
-        <button class="btn-export primary" id="applyImport">Apply</button>
-        <button class="btn-export" id="cancelImport">Cancel</button>
+        <div class="import-hint">Accepts plain data ("type": "delta" | "subtotal" | "total";
+          subtotal values are computed), or a full config from Export JSON.</div>
+        <div id="importMsg" class="import-msg"></div>
+        <div class="export-btns">
+          <button class="btn-export primary" id="applyImport">Apply</button>
+          <button class="btn-export" id="cancelImport">Cancel</button>
+        </div>
       </div>
     </div>
-    <div class="export-btns">
-      <button class="btn-export primary" onclick="exportChart(true)">Export PNG</button>
-      <button class="btn-export" onclick="exportChart(false)">Transparent</button>
-    </div>
-    <div class="footer-links">
-      <button id="toggleImport" class="btn-link">Import JSON…</button>
-      <button class="btn-link" onclick="exportJSON()">Export JSON</button>
-    </div>
   </div>
-</div>
-
-<div id="preview">
-  <nav class="chart-tabs"></nav>
   <canvas id="canvas"></canvas>
 </div>
 
-<script src="shared.js?v=2"></script>
+<script src="shared.js?v=3"></script>
 <script>
 // ── State ──────────────────────────────────────────────────────────────────
 let nextId = 1;
